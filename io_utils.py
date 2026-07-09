@@ -280,16 +280,64 @@ def _parse_data_matrix(data_lines: list[str]) -> np.ndarray:
     return np.asarray(rows, dtype=float)
 
 
-def _detect_channel_names(header_lines: list[str], expected: list[str]) -> list[str]:
-    """Intenta extraer los nombres de canal del encabezado del archivo.
+# Token de nombre de sensor con notación por puntos (p. ej. Mach1.P1.Y).
+_SENSOR_TOKEN_RE = re.compile(r"[A-Za-z]\w*(?:\.\w+)+")
 
-    Se busca una línea que contenga varios de los nombres esperados (p. ej.
-    ``Mach1.P1.Y``). Si no se encuentra, se devuelven los nombres del archivo
-    de configuración en su orden por defecto.
+
+def _parse_name_row(header_lines: list[str]) -> list[str] | None:
+    """Extrae el mapa completo de canales de la fila ``Name`` del bloque INFO.
+
+    El equipo de adquisición escribe una línea del tipo::
+
+        Name<TAB>Ext. sync. 1<TAB>Input 1: Mach1.P1.Y<TAB>Input 2: Mach1.P1.X ...
+
+    con una etiqueta por **columna de datos**, en el mismo orden. Es
+    fundamental respetar ese orden: la primera columna es el tacómetro
+    (``Ext. sync.``), no una sonda, de modo que ``Mach1.P1.Y`` es en realidad
+    la **segunda** columna. Se devuelve la lista de nombres alineada con las
+    columnas: para cada campo se extrae el token de sensor con notación por
+    puntos si existe (``Mach1.P1.Y``) y, si no (tacómetro/sincronismo), se
+    conserva la etiqueta limpia.
+
+    Returns
+    -------
+    list of str or None
+        Un nombre por columna de datos, o ``None`` si no hay fila ``Name``.
     """
-    token_re = re.compile(r"[A-Za-z][\w.]*\.[\w.]+")  # tokens tipo Mach1.P1.Y
     for line in header_lines:
-        tokens = token_re.findall(line)
+        fields = [f.strip() for f in line.split("\t")] if "\t" in line \
+            else line.split()
+        if len(fields) < 3 or fields[0].strip().lower() != "name":
+            continue
+        cols = [f for f in fields[1:] if f != ""]
+        if len(cols) < 2:
+            continue
+        names: list[str] = []
+        for i, col in enumerate(cols):
+            match = _SENSOR_TOKEN_RE.search(col)
+            names.append(match.group(0) if match else (col or f"col{i + 1}"))
+        logger.debug("Canales de la fila 'Name': %s", names)
+        return names
+    return None
+
+
+def _detect_channel_names(header_lines: list[str], expected: list[str]) -> list[str]:
+    """Extrae los nombres de canal del encabezado, alineados con las columnas.
+
+    Estrategia:
+
+    1. Fila ``Name`` del bloque INFO (formato real del equipo): da el mapa
+       completo columna->canal, incluida la columna de tacómetro inicial.
+    2. Respaldo: primera línea que contenga al menos dos de los nombres
+       esperados (p. ej. cabeceras simplificadas o archivos sintéticos).
+    3. Último recurso: los nombres por defecto de ``config.CHANNEL_NAMES``.
+    """
+    named = _parse_name_row(header_lines)
+    if named is not None:
+        return named
+
+    for line in header_lines:
+        tokens = _SENSOR_TOKEN_RE.findall(line)
         hits = [t for t in tokens if t in expected]
         if len(hits) >= 2:
             logger.debug("Canales detectados en el encabezado: %s", hits)

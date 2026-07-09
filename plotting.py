@@ -329,6 +329,158 @@ def plot_campbell(
     _save(fig, path, dpi)
 
 
+def plot_stabilization_diagram(
+    stab,
+    path: Path,
+    clusters=None,
+    f_rotation: float = 0.0,
+    harmonic_orders: list[int] | None = None,
+    dpi: int = 150,
+) -> None:
+    """Diagrama de estabilización SSI de un ensayo.
+
+    Cada marcador es un polo: eje X = frecuencia, eje Y = orden del modelo. El
+    color y la forma codifican el grado de estabilidad respecto al orden
+    anterior (Peeters & De Roeck). Sobre el fondo se dibuja el espectro medio
+    de las salidas y, si se pasan, las frecuencias de los modos físicos ya
+    agrupados (Dreher et al.) como líneas verticales.
+
+    Parameters
+    ----------
+    stab : ssi.StabilizationResult
+        Resultado de la estabilización (órdenes, polos etiquetados, espectro).
+    path : Path
+        Archivo de salida.
+    clusters : list of ssi.ModeCluster, optional
+        Modos físicos identificados, para marcarlos con una línea vertical.
+    f_rotation : float
+        Frecuencia de rotación 1X [Hz]; si es > 0 se dibujan sus armónicos.
+    harmonic_orders : list of int, optional
+        Órdenes nX a dibujar como referencia.
+    dpi : int
+        Resolución de la figura.
+    """
+    fig, ax = plt.subplots(figsize=(11, 6.5))
+
+    # Marcadores por categoría de estabilidad.
+    styles = {
+        "stable": ("o", "#1a7f37", "Estable (f, ζ, MAC)"),
+        "stable_f_d": ("s", "#2f6fb2", "Estable (f, ζ)"),
+        "stable_f": ("^", "#d99000", "Estable (f)"),
+        "new": ("x", "0.6", "Nuevo / inestable"),
+    }
+    for label, (marker, color, legend) in styles.items():
+        pts = [(pp.freq, pp.order) for pp in stab.poles if pp.label == label]
+        if pts:
+            fx, oy = zip(*pts)
+            ax.plot(fx, oy, marker, color=color, markersize=5,
+                    linestyle="none", alpha=0.8, label=legend)
+
+    # Espectro medio de las salidas como fondo (eje derecho).
+    if len(stab.ref_freq) and len(stab.ref_spectrum):
+        ax2 = ax.twinx()
+        ax2.plot(stab.ref_freq, to_db(stab.ref_spectrum), color="0.75",
+                 linewidth=1.0, zorder=0)
+        ax2.set_ylabel("PSD media salidas [dB]", color="0.55")
+        ax2.tick_params(axis="y", colors="0.55")
+        ax2.grid(False)
+
+    # Armónicos de la rotación (líneas verticales de referencia).
+    if f_rotation > 0 and harmonic_orders:
+        for n in harmonic_orders:
+            fh = n * f_rotation
+            if stab.orders and fh <= stab.ref_freq.max(initial=fh):
+                ax.axvline(fh, color="#c2452f", linewidth=0.7, linestyle=":",
+                           zorder=1)
+                ax.annotate(f"{n}X", xy=(fh, max(stab.orders)),
+                            xytext=(2, -2), textcoords="offset points",
+                            fontsize=7, color="#c2452f", va="top")
+
+    # Modos físicos agrupados: línea vertical y etiqueta con frecuencia y ζ.
+    if clusters:
+        for c in clusters:
+            style = "--" if c.is_harmonic else "-"
+            col = "#c2452f" if c.is_harmonic else "#1a7f37"
+            ax.axvline(c.freq_mean, color=col, linewidth=1.1, linestyle=style,
+                       alpha=0.5, zorder=1)
+            tag = f"{c.freq_mean:.1f} Hz\nζ={100 * c.zeta_mean:.1f}%"
+            if c.is_harmonic:
+                tag += f"\n({c.harmonic_order}X)"
+            ax.annotate(tag, xy=(c.freq_mean, stab.orders[0] if stab.orders else 0),
+                        xytext=(2, 2), textcoords="offset points",
+                        fontsize=7, color=col, va="bottom")
+
+    ax.set_xlabel("Frecuencia [Hz]")
+    ax.set_ylabel("Orden del modelo")
+    ax.set_title("Diagrama de estabilización · SSI-COV/ref")
+    if len(stab.ref_freq):
+        ax.set_xlim(stab.ref_freq[0], stab.ref_freq[-1])
+    ax.legend(loc="lower right", frameon=False, fontsize=8, ncol=2)
+    _save(fig, path, dpi)
+
+
+def plot_ssi_campbell(
+    table: pd.DataFrame,
+    path: Path,
+    colormap: str = "viridis",
+    show_harmonics: bool = True,
+    harmonic_orders: list[int] | None = None,
+    dpi: int = 150,
+) -> None:
+    """Diagrama de Campbell de las frecuencias naturales identificadas por SSI.
+
+    Cada punto es un modo físico persistente entre condiciones: eje X = RPM,
+    eje Y = frecuencia. El color y el tamaño crecen con la persistencia (en
+    cuántas condiciones experimentales se identificó el modo a esa velocidad).
+
+    Parameters
+    ----------
+    table : pd.DataFrame
+        Tabla de modos persistentes con columnas ``rpm``, ``freq_mean`` y
+        ``persistence``.
+    path : Path
+        Archivo de salida.
+    colormap : str
+        Mapa de colores secuencial para la persistencia.
+    show_harmonics, harmonic_orders
+        Dibujar las líneas nX de referencia.
+    dpi : int
+        Resolución de la figura.
+    """
+    fig, ax = plt.subplots(figsize=(9, 6.5))
+    if table.empty:
+        ax.text(0.5, 0.5, "Sin modos identificados", ha="center", va="center",
+                transform=ax.transAxes)
+    else:
+        rpm = table["rpm"].to_numpy()
+        freq = table["freq_mean"].to_numpy()
+        pers = table["persistence"].to_numpy()
+
+        if show_harmonics and harmonic_orders:
+            rpm_line = np.linspace(0, rpm.max() * 1.05, 50)
+            for n in harmonic_orders:
+                ax.plot(rpm_line, n * rpm_line / 60.0, color="0.75",
+                        linewidth=0.8, linestyle="--", zorder=1)
+                ax.annotate(f"{n}X",
+                            xy=(rpm_line[-1], n * rpm_line[-1] / 60.0),
+                            xytext=(4, 0), textcoords="offset points",
+                            fontsize=8, color="0.5", va="center")
+
+        sizes = 15.0 + 145.0 * pers
+        sc = ax.scatter(rpm, freq, s=sizes, c=pers, cmap=colormap,
+                        vmin=0.0, vmax=1.0, alpha=0.85,
+                        edgecolors="white", linewidths=0.6, zorder=3)
+        cbar = fig.colorbar(sc, ax=ax, pad=0.02)
+        cbar.set_label("Persistencia entre condiciones")
+        ax.set_xlim(0, rpm.max() * 1.08)
+        ax.set_ylim(0, max(freq.max() * 1.1, 1.0))
+
+    ax.set_xlabel("Velocidad de rotación [rpm]")
+    ax.set_ylabel("Frecuencia natural [Hz]")
+    ax.set_title("Diagrama de Campbell · frecuencias naturales (SSI)")
+    _save(fig, path, dpi)
+
+
 def plot_persistence_histogram(
     table: pd.DataFrame,
     path: Path,

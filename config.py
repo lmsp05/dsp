@@ -265,6 +265,100 @@ CAMPBELL_HARMONIC_ORDERS: list[int] = [1, 2, 3]
 CAMPBELL_COLORMAP: str = "viridis"
 
 # ---------------------------------------------------------------------------
+# 9. Identificación estocástica de subespacios (SSI-COV/ref)
+# ---------------------------------------------------------------------------
+# Parámetros del método OMA avanzado implementado en ``ssi.py`` y ejecutado
+# con ``ssi_main.py`` (Peeters & De Roeck 2000 + Dreher et al. 2023). Es
+# independiente del pipeline de peak picking anterior.
+
+#: Canales de salida del modelo SSI (las 4 sondas de proximidad; el
+#: acelerómetro Mach1.S1 se excluye porque mezcla unidades de aceleración con
+#: los desplazamientos de las sondas).
+SSI_OUTPUT_SENSORS: list[str] = [
+    "Mach1.P1.Y",
+    "Mach1.P1.X",
+    "Mach1.P2.Y",
+    "Mach1.P2.X",
+]
+
+#: Canales de referencia (subconjunto de SSI_OUTPUT_SENSORS). En el SSI
+#: basado en referencias solo se usan estos canales para las columnas de la
+#: matriz de covarianzas, lo que reduce el coste sin perder observabilidad si
+#: las referencias están bien excitadas. Las dos sondas verticales suelen ser
+#: buenas referencias en un rotor.
+SSI_REF_SENSORS: list[str] = [
+    "Mach1.P1.Y",
+    "Mach1.P2.Y",
+]
+
+#: Factor de diezmado antes de la SSI. La frecuencia de muestreo efectiva pasa
+#: a ser FS / SSI_DECIMATION. Con FS = 12800 Hz y factor 10 -> 1280 Hz
+#: (Nyquist 640 Hz), suficiente para modos por debajo de SSI_FMAX y mucho más
+#: barato numéricamente. Ajustar si SSI_FMAX se acerca al nuevo Nyquist.
+SSI_DECIMATION: int = 10
+
+#: Número de bloques-fila ``p`` de la matriz bloque-Toeplitz de covarianzas.
+#: El orden máximo alcanzable es (nº de salidas) * p.
+SSI_BLOCK_ROWS: int = 40
+
+#: Rango de órdenes del modelo para el diagrama de estabilización (pares).
+SSI_ORDER_MIN: int = 2
+SSI_ORDER_MAX: int = 60
+SSI_ORDER_STEP: int = 2
+
+#: Banda de frecuencias de interés para la SSI [Hz].
+SSI_FMIN: float = 2.0
+SSI_FMAX: float = 500.0
+
+#: Amortiguamiento máximo admisible para aceptar un polo como físico (0-1).
+SSI_ZETA_MAX: float = 0.2
+
+#: Tolerancias de estabilidad entre órdenes consecutivos:
+#:   - SSI_DF_TOL:  desviación relativa de frecuencia (0.01 = 1 %).
+#:   - SSI_DZ_TOL:  desviación relativa de amortiguamiento (0.05 = 5 %).
+#:   - SSI_MAC_TOL: MAC mínimo entre formas modales de órdenes consecutivos.
+SSI_DF_TOL: float = 0.01
+SSI_DZ_TOL: float = 0.05
+SSI_MAC_TOL: float = 0.98
+
+#: Clustering de polos estables -> modos físicos (Dreher et al.).
+#:   - SSI_CLUSTER_FREQ_WEIGHT / SSI_CLUSTER_MAC_WEIGHT: pesos de la distancia
+#:     (frecuencia relativa vs 1-MAC).
+#:   - SSI_CLUSTER_DISTANCE: umbral de corte del dendrograma.
+#:   - SSI_MIN_CLUSTER_FRACTION: fracción mínima de órdenes que debe cubrir un
+#:     grupo para considerarse un modo físico (columna del diagrama).
+#:   - SSI_MIN_CLUSTER_SIZE: número mínimo absoluto de polos por grupo.
+SSI_CLUSTER_FREQ_WEIGHT: float = 1.0
+SSI_CLUSTER_MAC_WEIGHT: float = 1.0
+SSI_CLUSTER_DISTANCE: float = 0.05
+SSI_MIN_CLUSTER_FRACTION: float = 0.25
+SSI_MIN_CLUSTER_SIZE: int = 3
+
+#: Marcar (y opcionalmente excluir) los modos que coinciden con armónicos nX
+#: de la velocidad de rotación. La 1X se refina desde el espectro igual que en
+#: el peak picking (HARMONICS_REFINE_*).
+SSI_FLAG_HARMONICS: bool = True
+SSI_HARMONICS_MAX_ORDER: int = 10
+SSI_HARMONICS_TOL_HZ: float = 1.5
+SSI_HARMONICS_TOL_REL: float = 0.02
+
+#: Excluir los modos marcados como armónicos de la tabla de frecuencias
+#: naturales y del Campbell (recomendado en maquinaria rotativa).
+SSI_EXCLUDE_HARMONICS: bool = True
+
+#: Tolerancia [Hz] del agrupamiento de frecuencias entre condiciones de una
+#: misma RPM (persistencia de los modos SSI).
+SSI_CLUSTER_TOLERANCE_HZ: float = 1.0
+
+#: Persistencia y apariciones mínimas para que un modo aparezca en el Campbell
+#: SSI y en la tabla principal de frecuencias naturales.
+SSI_MIN_PERSISTENCE: float = 0.5
+SSI_MIN_APPEARANCES: int = 2
+
+#: Guardar el diagrama de estabilización de cada ensayo.
+SSI_SAVE_STABILIZATION_PLOTS: bool = True
+
+# ---------------------------------------------------------------------------
 # 8. Ejecución
 # ---------------------------------------------------------------------------
 
