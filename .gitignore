@@ -1,0 +1,18 @@
+# Resultados del análisis
+results/
+results_*/
+
+# Bases de datos (reales o sintéticas)
+data/
+data_*/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Editores
+.vscode/
+.idea/
