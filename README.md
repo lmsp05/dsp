@@ -63,6 +63,10 @@ python main.py
 # Cambiar carpeta de datos, sensor o carpeta de salida sin editar config.py
 python main.py --data-dir /ruta/a/mis/datos --sensor Mach1.P2.X --output-dir results_p2x
 
+# Modo CPSD: espectro cruzado entre las 4 sondas de proximidad
+# (excluye el acelerómetro Mach1.S1)
+python main.py --mode cpsd --output-dir results_cpsd
+
 # Ejecución rápida de prueba (sin paralelizar, sin figuras individuales)
 python main.py --no-parallel --no-individual-plots --limit 10
 ```
@@ -73,6 +77,23 @@ python main.py --no-parallel --no-individual-plots --limit 10
 python generate_synthetic_data.py --data-dir data_synthetic
 python main.py --data-dir data_synthetic --output-dir results_synthetic
 ```
+
+## Modos de análisis
+
+* **`psd`** (por defecto): autoespectro de Welch del sensor único `SENSOR`.
+* **`cpsd`**: espectro cruzado (CPSD, `scipy.signal.csd`) entre los pares de
+  sondas de proximidad `PROXIMITY_SENSORS` — los acelerómetros quedan fuera.
+  Para cada archivo se promedia la magnitud de la CPSD de todos los pares
+  (configurables con `CPSD_PAIRS`) en un espectro compuesto: el contenido
+  correlacionado entre sondas (respuesta estructural) se refuerza y el ruido
+  propio de cada sensor se atenúa. Además se calcula la **coherencia media**
+  entre pares y los picos con coherencia inferior a `COHERENCE_THRESHOLD` se
+  descartan (`CPSD_USE_COHERENCE`). Las figuras individuales incluyen un
+  panel de coherencia bajo el espectro.
+
+El modo se elige con `ANALYSIS_MODE` en `config.py` o con `--mode` en la
+línea de comandos; el resto del pipeline (picos, clustering, persistencia,
+Campbell) es idéntico en ambos modos.
 
 ## Flujo del análisis
 
@@ -125,7 +146,10 @@ y `Promedio_PSD`.
 
 | Parámetro | Significado | Valor por defecto |
 |---|---|---|
-| `SENSOR` | Canal a analizar | `Mach1.P1.Y` |
+| `ANALYSIS_MODE` | `"psd"` (un sensor) o `"cpsd"` (cruzado entre sondas) | `psd` |
+| `SENSOR` | Canal a analizar en modo `psd` | `Mach1.P1.Y` |
+| `PROXIMITY_SENSORS` | Sondas usadas en modo `cpsd` (sin acelerómetros) | P1.Y, P1.X, P2.Y, P2.X |
+| `COHERENCE_THRESHOLD` | Coherencia mínima para conservar un pico (`cpsd`) | 0.5 |
 | `FS` | Frecuencia de muestreo | 12 800 Hz |
 | `WELCH_NPERSEG` | Muestras por segmento de Welch (df = FS/nperseg) | 16 384 (df ≈ 0.78 Hz) |
 | `FMAX` / `FMIN` | Rango de análisis | 500 / 2 Hz |

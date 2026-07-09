@@ -54,15 +54,49 @@ RPM_PATTERN: str = r"[Rr][Pp][Mm][\s_\-]*(\d+)"
 FILE_EXTENSION: str = ".txt"
 
 # ---------------------------------------------------------------------------
-# 2. Adquisición
+# 2. Adquisición y modo de análisis
 # ---------------------------------------------------------------------------
 
 #: Frecuencia de muestreo [Hz].
 FS: float = 12800.0
 
-#: Sensor (canal) a analizar. Debe coincidir con uno de ``CHANNEL_NAMES``
-#: o con un nombre detectado automáticamente en el encabezado del archivo.
+#: Modo de análisis espectral:
+#:   - "psd":  autoespectro (PSD de Welch) del sensor único ``SENSOR``.
+#:   - "cpsd": espectro cruzado (CPSD) entre los pares de sensores de
+#:             proximidad ``PROXIMITY_SENSORS``. Para cada archivo se
+#:             promedia la magnitud de la CPSD de todos los pares en un
+#:             espectro compuesto; el contenido coherente entre sondas
+#:             (modos estructurales) se refuerza y el ruido propio de cada
+#:             sensor se atenúa. Los sensores de aceleración (Mach1.S1)
+#:             quedan fuera de este modo.
+ANALYSIS_MODE: str = "psd"
+
+#: Sensor (canal) a analizar en modo "psd". Debe coincidir con uno de
+#: ``CHANNEL_NAMES`` o con un nombre detectado en el encabezado del archivo.
 SENSOR: str = "Mach1.P1.Y"
+
+#: Sensores de proximidad usados en el modo "cpsd" (sin acelerómetros).
+PROXIMITY_SENSORS: list[str] = [
+    "Mach1.P1.Y",
+    "Mach1.P1.X",
+    "Mach1.P2.Y",
+    "Mach1.P2.X",
+]
+
+#: Pares de sensores para la CPSD:
+#:   - "all": todas las combinaciones de ``PROXIMITY_SENSORS`` (6 pares).
+#:   - lista explícita de tuplas, p. ej.
+#:     [("Mach1.P1.Y", "Mach1.P2.Y"), ("Mach1.P1.X", "Mach1.P2.X")]
+CPSD_PAIRS: str | list[tuple[str, str]] = "all"
+
+#: Usar la coherencia para depurar los picos en modo "cpsd": un pico de la
+#: CPSD compuesta se descarta si la coherencia media entre pares en esa
+#: frecuencia es inferior al umbral (el pico no está correlacionado entre
+#: sondas y difícilmente es un modo).
+CPSD_USE_COHERENCE: bool = True
+
+#: Umbral de coherencia media (0-1) para conservar un pico.
+COHERENCE_THRESHOLD: float = 0.5
 
 #: Nombres de los canales en el orden en que aparecen como columnas en los
 #: archivos de datos. Se utiliza cuando el encabezado del archivo no permite

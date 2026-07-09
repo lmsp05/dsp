@@ -19,8 +19,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from itertools import combinations
+
 import numpy as np
-from scipy.signal import welch
+from scipy.signal import coherence as scipy_coherence
+from scipy.signal import csd, welch
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +144,105 @@ def compute_psd(
         pxx = moving_average(pxx, smoothing_window_bins)
 
     return PSDResult(freq=freq, psd=pxx)
+
+
+def compute_cpsd_composite(
+    signals: dict[str, np.ndarray],
+    pairs: str | list[tuple[str, str]],
+    fs: float,
+    nperseg: int,
+    overlap: float = 0.5,
+    window: str = "hann",
+    detrend: str | bool = "constant",
+    fmin: float = 0.0,
+    fmax: float | None = None,
+    smoothing: bool = False,
+    smoothing_window_bins: int = 5,
+    compute_coherence: bool = True,
+) -> tuple[PSDResult, np.ndarray | None]:
+    """CPSD compuesta entre pares de sensores (modo multi-sensor).
+
+    Para cada par de sensores se calcula el espectro cruzado (CPSD,
+    ``scipy.signal.csd``) y la magnitud de todas las CPSD se promedia en un
+    único espectro compuesto por archivo. El contenido correlacionado entre
+    sondas (respuesta estructural) se conserva, mientras que el ruido propio
+    de cada sensor —incoherente entre canales— se atenúa. Opcionalmente se
+    calcula también la coherencia media entre pares, que permite descartar
+    picos no correlacionados.
+
+    Parameters
+    ----------
+    signals : dict
+        Mapa ``sensor -> señal temporal`` (todas de la misma medición).
+    pairs : "all" or list of tuple
+        Pares a combinar. ``"all"`` usa todas las combinaciones de los
+        sensores presentes en ``signals``.
+    fs, nperseg, overlap, window, detrend, fmin, fmax
+        Parámetros espectrales (idénticos a :func:`compute_psd`).
+    smoothing, smoothing_window_bins
+        Suavizado opcional del espectro compuesto.
+    compute_coherence : bool
+        Calcular también la coherencia media entre pares.
+
+    Returns
+    -------
+    tuple
+        ``(PSDResult, coherencia_media)`` donde el ``PSDResult`` contiene la
+        magnitud media de las CPSD y ``coherencia_media`` es un array 0-1
+        (o ``None`` si ``compute_coherence`` es False).
+    """
+    sensor_list = list(signals)
+    if pairs == "all":
+        pair_list = list(combinations(sensor_list, 2))
+    else:
+        pair_list = [tuple(p) for p in pairs]
+    if not pair_list:
+        raise ValueError("El modo CPSD necesita al menos un par de sensores.")
+    for a, b in pair_list:
+        if a not in signals or b not in signals:
+            raise ValueError(f"Par CPSD ({a}, {b}) no disponible en {sensor_list}.")
+
+    n = min(len(s) for s in signals.values())
+    if n < 256:
+        raise ValueError(f"Señales demasiado cortas para CPSD ({n} muestras).")
+
+    nperseg_eff = int(nperseg)
+    if nperseg_eff > n:
+        nperseg_eff = 2 ** int(np.floor(np.log2(n)))
+        logger.debug("nperseg reducido a %d (señales de %d muestras).",
+                     nperseg_eff, n)
+    overlap = float(np.clip(overlap, 0.0, 0.95))
+    noverlap = int(round(nperseg_eff * overlap))
+    kwargs = dict(fs=fs, window=window, nperseg=nperseg_eff,
+                  noverlap=noverlap, detrend=detrend)
+
+    mag_stack: list[np.ndarray] = []
+    coh_stack: list[np.ndarray] = []
+    freq = None
+    for a, b in pair_list:
+        x, y = signals[a][:n], signals[b][:n]
+        freq, gxy = csd(x, y, scaling="density", **kwargs)
+        mag_stack.append(np.abs(gxy))
+        if compute_coherence:
+            _, cxy = scipy_coherence(x, y, **kwargs)
+            coh_stack.append(cxy)
+
+    cpsd_mean = np.vstack(mag_stack).mean(axis=0)
+    coh_mean = np.vstack(coh_stack).mean(axis=0) if coh_stack else None
+
+    # Recorte al rango de análisis.
+    fmax_eff = fmax if fmax is not None else freq[-1]
+    mask = (freq >= fmin) & (freq <= fmax_eff)
+    freq, cpsd_mean = freq[mask], cpsd_mean[mask]
+    if coh_mean is not None:
+        coh_mean = coh_mean[mask]
+    if len(freq) < 8:
+        raise ValueError("El rango [FMIN, FMAX] deja muy pocas líneas de CPSD.")
+
+    if smoothing:
+        cpsd_mean = moving_average(cpsd_mean, smoothing_window_bins)
+
+    return PSDResult(freq=freq, psd=cpsd_mean), coh_mean
 
 
 def to_db(psd: np.ndarray) -> np.ndarray:

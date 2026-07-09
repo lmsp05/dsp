@@ -311,6 +311,61 @@ def _find_time_column(matrix: np.ndarray, mode: bool | str) -> bool:
     return bool(np.all(diffs > 0) and np.std(diffs) < 0.01 * abs(np.mean(diffs)))
 
 
+def _load_matrix(
+    info: FileInfo,
+    channel_names: list[str],
+    has_time_column: bool | str = "auto",
+) -> tuple[np.ndarray, list[str], int]:
+    """Lee y valida el bloque de datos de un archivo de medición.
+
+    Returns
+    -------
+    tuple
+        ``(matrix, channels, offset)`` donde ``matrix`` es la matriz numérica
+        completa, ``channels`` los nombres de canal (detectados o por
+        defecto) y ``offset`` vale 1 si la primera columna es tiempo.
+    """
+    lines = _read_text(info.path)
+    header_lines, data_lines = _extract_data_block(lines)
+    if len(data_lines) < 100:
+        raise ValueError(
+            f"Bloque de datos demasiado corto ({len(data_lines)} líneas)."
+        )
+
+    matrix = _parse_data_matrix(data_lines)
+    channels = _detect_channel_names(header_lines, channel_names)
+
+    offset = 0
+    if matrix.shape[1] > 1 and _find_time_column(matrix, has_time_column):
+        offset = 1
+    return matrix, channels, offset
+
+
+def _extract_channel(
+    matrix: np.ndarray,
+    channels: list[str],
+    offset: int,
+    sensor: str,
+    remove_mean: bool,
+) -> np.ndarray:
+    """Extrae la columna de un sensor de la matriz de datos."""
+    n_data_cols = matrix.shape[1] - offset
+    if sensor not in channels:
+        raise ValueError(
+            f"El sensor '{sensor}' no está entre los canales {channels}."
+        )
+    col_idx = channels.index(sensor)
+    if col_idx >= n_data_cols:
+        raise ValueError(
+            f"El archivo tiene {n_data_cols} columnas de datos, pero el "
+            f"sensor '{sensor}' corresponde a la columna {col_idx + 1}."
+        )
+    signal = matrix[:, offset + col_idx].astype(float)
+    if remove_mean:
+        signal = signal - float(np.mean(signal))
+    return signal
+
+
 def read_measurement(
     info: FileInfo,
     sensor: str,
@@ -343,40 +398,49 @@ def read_measurement(
     ValueError
         Si el archivo está corrupto, incompleto o no contiene el sensor.
     """
-    lines = _read_text(info.path)
-    header_lines, data_lines = _extract_data_block(lines)
-    if len(data_lines) < 100:
-        raise ValueError(
-            f"Bloque de datos demasiado corto ({len(data_lines)} líneas)."
-        )
-
-    matrix = _parse_data_matrix(data_lines)
-    channels = _detect_channel_names(header_lines, channel_names)
-
-    # Descartar la columna de tiempo si procede.
-    offset = 0
-    if matrix.shape[1] > 1 and _find_time_column(matrix, has_time_column):
-        offset = 1
-
-    n_data_cols = matrix.shape[1] - offset
-    if sensor not in channels:
-        raise ValueError(
-            f"El sensor '{sensor}' no está entre los canales {channels}."
-        )
-    col_idx = channels.index(sensor)
-    if col_idx >= n_data_cols:
-        raise ValueError(
-            f"El archivo tiene {n_data_cols} columnas de datos, pero el "
-            f"sensor '{sensor}' corresponde a la columna {col_idx + 1}."
-        )
-
-    signal = matrix[:, offset + col_idx].astype(float)
-    if remove_mean:
-        signal = signal - float(np.mean(signal))
-
+    matrix, channels, offset = _load_matrix(info, channel_names, has_time_column)
+    signal = _extract_channel(matrix, channels, offset, sensor, remove_mean)
     return MeasurementRecord(
         info=info,
         signal=signal,
-        channel_names=channels[:n_data_cols],
+        channel_names=channels[: matrix.shape[1] - offset],
         sensor=sensor,
     )
+
+
+def read_measurement_multi(
+    info: FileInfo,
+    sensors: list[str],
+    channel_names: list[str],
+    has_time_column: bool | str = "auto",
+    remove_mean: bool = True,
+) -> dict[str, np.ndarray]:
+    """Lee varios canales de un mismo archivo con un único parsing.
+
+    Se usa en el modo CPSD, donde hacen falta simultáneamente todas las
+    sondas de proximidad de la misma medición.
+
+    Parameters
+    ----------
+    info : FileInfo
+        Metadatos del archivo.
+    sensors : list of str
+        Canales a extraer (p. ej. las cuatro sondas de proximidad).
+    channel_names, has_time_column, remove_mean
+        Igual que en :func:`read_measurement`.
+
+    Returns
+    -------
+    dict
+        Mapa ``sensor -> señal`` con un array por canal solicitado.
+
+    Raises
+    ------
+    ValueError
+        Si el archivo está corrupto o falta alguno de los sensores.
+    """
+    matrix, channels, offset = _load_matrix(info, channel_names, has_time_column)
+    return {
+        sensor: _extract_channel(matrix, channels, offset, sensor, remove_mean)
+        for sensor in sensors
+    }

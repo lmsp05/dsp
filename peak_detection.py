@@ -177,6 +177,53 @@ def remove_harmonic_peaks(
     return keep
 
 
+def filter_peaks_by_coherence(
+    peaks: PeakSet,
+    freq: np.ndarray,
+    coherence: np.ndarray,
+    threshold: float,
+) -> PeakSet:
+    """Descarta los picos cuya coherencia media entre sensores sea baja.
+
+    En el modo CPSD, un pico del espectro cruzado compuesto solo es un buen
+    candidato a modo si el movimiento está correlacionado entre las sondas:
+    se conservan únicamente los picos con coherencia >= ``threshold``.
+
+    Parameters
+    ----------
+    peaks : PeakSet
+        Picos detectados sobre la CPSD compuesta.
+    freq : np.ndarray
+        Vector de frecuencias del espectro.
+    coherence : np.ndarray
+        Coherencia media entre pares (0-1) sobre ``freq``.
+    threshold : float
+        Coherencia mínima para conservar un pico.
+
+    Returns
+    -------
+    PeakSet
+        Subconjunto de picos coherentes (mismos metadatos que el original).
+    """
+    if len(peaks) == 0:
+        return peaks
+    coh_at_peaks = np.interp(peaks.freq, freq, coherence)
+    keep = coh_at_peaks >= threshold
+    n_removed = int(np.sum(~keep))
+    if n_removed:
+        logger.debug("Descartados %d picos con coherencia < %.2f.",
+                     n_removed, threshold)
+    return PeakSet(
+        freq=peaks.freq[keep],
+        amp=peaks.amp[keep],
+        amp_db=peaks.amp_db[keep],
+        prominence_db=peaks.prominence_db[keep],
+        threshold_db=peaks.threshold_db,
+        f_rotation=peaks.f_rotation,
+        removed_harmonics=peaks.removed_harmonics,
+    )
+
+
 def detect_peaks(
     freq: np.ndarray,
     psd: np.ndarray,

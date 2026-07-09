@@ -41,10 +41,11 @@ import pandas as pd
 
 import config
 import plotting
-from io_utils import FileInfo, discover_files, read_measurement
-from peak_detection import PeakSet, detect_peaks
+from io_utils import (FileInfo, discover_files, read_measurement,
+                      read_measurement_multi)
+from peak_detection import (PeakSet, detect_peaks, filter_peaks_by_coherence)
 from persistence import PeakObservation, analyze_rpm_group, filter_persistent
-from psd import PSDResult, average_psd, compute_psd
+from psd import PSDResult, average_psd, compute_cpsd_composite, compute_psd
 
 logger = logging.getLogger("oma")
 
@@ -103,25 +104,51 @@ def process_file(task: tuple[FileInfo, dict]) -> dict:
     """
     info, p = task
     try:
-        record = read_measurement(
-            info,
-            sensor=p["sensor"],
-            channel_names=p["channel_names"],
-            has_time_column=p["has_time_column"],
-            remove_mean=p["remove_mean"],
-        )
-        psd_res = compute_psd(
-            record.signal,
-            fs=p["fs"],
-            nperseg=p["nperseg"],
-            overlap=p["overlap"],
-            window=p["window"],
-            detrend=p["detrend"],
-            fmin=p["fmin"],
-            fmax=p["fmax"],
-            smoothing=p["smoothing"],
-            smoothing_window_bins=p["smoothing_window_bins"],
-        )
+        coherence = None
+        if p["mode"] == "cpsd":
+            # Espectro cruzado compuesto entre sondas de proximidad.
+            signals = read_measurement_multi(
+                info,
+                sensors=p["proximity_sensors"],
+                channel_names=p["channel_names"],
+                has_time_column=p["has_time_column"],
+                remove_mean=p["remove_mean"],
+            )
+            psd_res, coherence = compute_cpsd_composite(
+                signals,
+                pairs=p["cpsd_pairs"],
+                fs=p["fs"],
+                nperseg=p["nperseg"],
+                overlap=p["overlap"],
+                window=p["window"],
+                detrend=p["detrend"],
+                fmin=p["fmin"],
+                fmax=p["fmax"],
+                smoothing=p["smoothing"],
+                smoothing_window_bins=p["smoothing_window_bins"],
+                compute_coherence=p["use_coherence"],
+            )
+        else:
+            # Autoespectro (PSD) del sensor único configurado.
+            record = read_measurement(
+                info,
+                sensor=p["sensor"],
+                channel_names=p["channel_names"],
+                has_time_column=p["has_time_column"],
+                remove_mean=p["remove_mean"],
+            )
+            psd_res = compute_psd(
+                record.signal,
+                fs=p["fs"],
+                nperseg=p["nperseg"],
+                overlap=p["overlap"],
+                window=p["window"],
+                detrend=p["detrend"],
+                fmin=p["fmin"],
+                fmax=p["fmax"],
+                smoothing=p["smoothing"],
+                smoothing_window_bins=p["smoothing_window_bins"],
+            )
         peaks = detect_peaks(
             psd_res.freq,
             psd_res.psd,
@@ -142,16 +169,26 @@ def process_file(task: tuple[FileInfo, dict]) -> dict:
             harmonics_refine_f1=p["harmonics_refine_f1"],
             harmonics_refine_search_rel=p["harmonics_refine_search_rel"],
         )
+        # En modo CPSD, descartar los picos con coherencia baja entre sondas.
+        if coherence is not None and p["use_coherence"]:
+            peaks = filter_peaks_by_coherence(
+                peaks, psd_res.freq, coherence, p["coherence_threshold"]
+            )
         return {"info": info, "freq": psd_res.freq, "psd": psd_res.psd,
-                "peaks": peaks}
+                "peaks": peaks, "coherence": coherence}
     except Exception as exc:  # noqa: BLE001 - un archivo malo no detiene nada
         return {"info": info, "error": f"{type(exc).__name__}: {exc}"}
 
 
-def build_params(sensor: str) -> dict:
+def build_params(sensor: str, mode: str) -> dict:
     """Empaqueta los parámetros de ``config.py`` para los trabajadores."""
     return {
+        "mode": mode,
         "sensor": sensor,
+        "proximity_sensors": config.PROXIMITY_SENSORS,
+        "cpsd_pairs": config.CPSD_PAIRS,
+        "use_coherence": config.CPSD_USE_COHERENCE,
+        "coherence_threshold": config.COHERENCE_THRESHOLD,
         "channel_names": config.CHANNEL_NAMES,
         "has_time_column": config.HAS_TIME_COLUMN,
         "remove_mean": config.REMOVE_MEAN,
@@ -375,7 +412,11 @@ def generate_figures(
     fmt = config.FIGURE_FORMAT
     dpi = config.FIGURE_DPI
 
-    # 1. PSD individual de cada ensayo con sus picos.
+    # Etiqueta del espectro según el modo (hay coherencia solo en CPSD).
+    is_cpsd = any(r.get("coherence") is not None for r in results)
+    spectrum_label = "CPSD" if is_cpsd else "PSD"
+
+    # 1. Espectro individual de cada ensayo con sus picos.
     if config.SAVE_INDIVIDUAL_PSD_PLOTS:
         iterator = results
         if config.SHOW_PROGRESS:
@@ -388,9 +429,13 @@ def generate_figures(
                 path=fig_dir / "psd_individual" / f"{info.label}.{fmt}",
                 scale=config.PSD_PLOT_SCALE,
                 dpi=dpi,
+                coherence=r.get("coherence"),
+                coherence_threshold=(config.COHERENCE_THRESHOLD
+                                     if config.CPSD_USE_COHERENCE else None),
+                spectrum_label=spectrum_label,
             )
 
-    # 2. PSD promedio de cada velocidad con los picos persistentes.
+    # 2. Espectro promedio de cada velocidad con los picos persistentes.
     if config.SAVE_AVERAGE_PSD_PLOTS:
         for rpm, (freq_avg, psd_mean, psd_std) in avg_by_rpm.items():
             table_rpm = persistent_table[persistent_table["rpm"] == rpm] \
@@ -400,6 +445,7 @@ def generate_figures(
                 path=fig_dir / "psd_average" / f"psd_avg_rpm{rpm:g}.{fmt}",
                 scale=config.PSD_PLOT_SCALE,
                 dpi=dpi,
+                spectrum_label=spectrum_label,
             )
 
     # 3. Figuras globales.
@@ -437,7 +483,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Carpeta de resultados "
                              "(por defecto config.OUTPUT_DIR).")
     parser.add_argument("--sensor", default=None,
-                        help="Canal a analizar (por defecto config.SENSOR).")
+                        help="Canal a analizar en modo psd "
+                             "(por defecto config.SENSOR).")
+    parser.add_argument("--mode", default=None, choices=["psd", "cpsd"],
+                        help="Modo de análisis: 'psd' (autoespectro de un "
+                             "sensor) o 'cpsd' (espectro cruzado entre las "
+                             "sondas de proximidad, sin acelerómetros). "
+                             "Por defecto config.ANALYSIS_MODE.")
     parser.add_argument("--no-parallel", action="store_true",
                         help="Desactiva el procesamiento en paralelo.")
     parser.add_argument("--no-individual-plots", action="store_true",
@@ -455,14 +507,20 @@ def main(argv: list[str] | None = None) -> int:
     data_dir = Path(args.data_dir or config.DATA_DIR)
     output_dir = Path(args.output_dir or config.OUTPUT_DIR)
     sensor = args.sensor or config.SENSOR
+    mode = args.mode or config.ANALYSIS_MODE
     parallel = config.PARALLEL_ENABLED and not args.no_parallel
     if args.no_individual_plots:
         config.SAVE_INDIVIDUAL_PSD_PLOTS = False
 
     setup_logging(output_dir)
     logger.info("=== OMA Peak Picking · rotor Jeffcott ===")
-    logger.info("Datos: %s | Salida: %s | Sensor: %s",
-                data_dir.resolve(), output_dir.resolve(), sensor)
+    if mode == "cpsd":
+        logger.info("Datos: %s | Salida: %s | Modo: CPSD entre %s",
+                    data_dir.resolve(), output_dir.resolve(),
+                    ", ".join(config.PROXIMITY_SENSORS))
+    else:
+        logger.info("Datos: %s | Salida: %s | Modo: PSD | Sensor: %s",
+                    data_dir.resolve(), output_dir.resolve(), sensor)
 
     # 1. Descubrimiento de la base de datos.
     try:
@@ -492,8 +550,8 @@ def main(argv: list[str] | None = None) -> int:
         for f in files
     ]).to_csv(index_path, index=False)
 
-    # 2. Lectura + PSD + peak picking (paralelizable).
-    results = run_processing(files, build_params(sensor), parallel)
+    # 2. Lectura + PSD/CPSD + peak picking (paralelizable).
+    results = run_processing(files, build_params(sensor, mode), parallel)
     if not results:
         logger.error("Ningún archivo pudo procesarse; se aborta el análisis.")
         return 1

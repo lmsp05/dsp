@@ -77,15 +77,18 @@ def plot_psd_with_peaks(
     path: Path,
     scale: str = "db",
     dpi: int = 150,
+    coherence: np.ndarray | None = None,
+    coherence_threshold: float | None = None,
+    spectrum_label: str = "PSD",
 ) -> None:
-    """PSD de un ensayo con los picos detectados y su frecuencia anotada.
+    """PSD (o CPSD) de un ensayo con los picos detectados y anotados.
 
     Parameters
     ----------
     freq, psd : np.ndarray
-        PSD lineal del ensayo y su vector de frecuencias.
+        Espectro lineal del ensayo y su vector de frecuencias.
     peaks : PeakSet
-        Picos detectados en esa PSD.
+        Picos detectados en ese espectro.
     title : str
         Título de la figura (etiqueta del ensayo).
     path : Path
@@ -94,8 +97,22 @@ def plot_psd_with_peaks(
         Escala del eje Y.
     dpi : int
         Resolución de la figura.
+    coherence : np.ndarray, optional
+        Coherencia media entre pares de sensores (modo CPSD). Si se
+        proporciona, se dibuja en un panel inferior compartiendo el eje X.
+    coherence_threshold : float, optional
+        Umbral de coherencia usado para depurar los picos (línea de
+        referencia en el panel de coherencia).
+    spectrum_label : str
+        Nombre del espectro para el eje Y ("PSD" o "CPSD").
     """
-    fig, ax = plt.subplots(figsize=(10, 4.5))
+    ax_coh = None
+    if coherence is not None:
+        fig, (ax, ax_coh) = plt.subplots(
+            2, 1, figsize=(10, 6), sharex=True, height_ratios=[3, 1]
+        )
+    else:
+        fig, ax = plt.subplots(figsize=(10, 4.5))
     y = _psd_to_plot_scale(psd, scale)
     ax.plot(freq, y, color=_LINE_COLOR, linewidth=1.0)
     if scale == "log":
@@ -132,8 +149,8 @@ def plot_psd_with_peaks(
                 rotation=90,
             )
 
-    ax.set_xlabel("Frecuencia [Hz]")
-    ax.set_ylabel("PSD [dB re 1 u²/Hz]" if scale == "db" else "PSD [u²/Hz]")
+    ax.set_ylabel(f"{spectrum_label} [dB re 1 u²/Hz]" if scale == "db"
+                  else f"{spectrum_label} [u²/Hz]")
     subtitle = (f"{len(peaks)} picos (prominencia ≥ "
                 f"{peaks.threshold_db:.1f} dB)")
     if len(peaks.removed_harmonics):
@@ -142,6 +159,24 @@ def plot_psd_with_peaks(
     ax.set_title(f"{title}  ·  {subtitle}")
     ax.set_xlim(freq[0], freq[-1])
     ax.margins(y=0.12)
+
+    # Panel inferior de coherencia (modo CPSD).
+    if ax_coh is not None:
+        ax_coh.plot(freq, coherence, color=_LINE_COLOR, linewidth=1.0)
+        if coherence_threshold is not None:
+            ax_coh.axhline(coherence_threshold, color=_PEAK_COLOR,
+                           linewidth=0.9, linestyle="--")
+            ax_coh.annotate(
+                f"umbral {coherence_threshold:.2f}",
+                xy=(freq[-1], coherence_threshold),
+                xytext=(-4, 4), textcoords="offset points",
+                ha="right", fontsize=7, color=_PEAK_COLOR,
+            )
+        ax_coh.set_ylim(0, 1.05)
+        ax_coh.set_ylabel("Coherencia")
+        ax_coh.set_xlabel("Frecuencia [Hz]")
+    else:
+        ax.set_xlabel("Frecuencia [Hz]")
     _save(fig, path, dpi)
 
 
@@ -154,6 +189,7 @@ def plot_average_psd(
     path: Path,
     scale: str = "db",
     dpi: int = 150,
+    spectrum_label: str = "PSD",
 ) -> None:
     """PSD promedio de una velocidad con banda ±1σ y picos persistentes.
 
@@ -188,7 +224,7 @@ def plot_average_psd(
     ax.fill_between(freq, lower, upper, color=_BAND_COLOR, alpha=0.18,
                     linewidth=0, label="±1 σ entre condiciones")
     ax.plot(freq, y_mean, color=_LINE_COLOR, linewidth=1.3,
-            label="PSD promedio")
+            label=f"{spectrum_label} promedio")
 
     if not persistent_table.empty:
         f_pk = persistent_table["freq_mean"].to_numpy()
@@ -209,8 +245,9 @@ def plot_average_psd(
             )
 
     ax.set_xlabel("Frecuencia [Hz]")
-    ax.set_ylabel("PSD [dB re 1 u²/Hz]" if scale == "db" else "PSD [u²/Hz]")
-    ax.set_title(f"PSD promedio · {rpm:g} rpm")
+    ax.set_ylabel(f"{spectrum_label} [dB re 1 u²/Hz]" if scale == "db"
+                  else f"{spectrum_label} [u²/Hz]")
+    ax.set_title(f"{spectrum_label} promedio · {rpm:g} rpm")
     ax.set_xlim(freq[0], freq[-1])
     ax.margins(y=0.15)
     ax.legend(loc="upper right", frameon=False, fontsize=8)
