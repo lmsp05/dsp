@@ -132,8 +132,9 @@ y `Promedio_PSD`.
 | `PEAK_PROMINENCE_MODE` | `"auto"` (desde el ruido) o `"fixed"` | `auto` |
 | `PEAK_DISTANCE_HZ` | Separación mínima entre picos | 2 Hz |
 | `CLUSTER_TOLERANCE_HZ` | Tolerancia del agrupamiento de frecuencias | 1.0 Hz |
-| `MIN_PERSISTENCE` | Persistencia mínima para el Campbell | 0.3 |
-| `REMOVE_HARMONICS` | Eliminar picos 1X…NX de la rotación | `False` |
+| `MIN_PERSISTENCE` | Persistencia mínima para el Campbell | 0.5 |
+| `REMOVE_HARMONICS` | Eliminar picos 1X…NX de la rotación | `True` (hasta 10X) |
+| `HARMONICS_REFINE_F1` | Estimar la 1X real desde la PSD (no la RPM nominal) | `True` |
 | `PARALLEL_ENABLED` | Procesamiento multiproceso | `True` |
 
 ## Extensión futura

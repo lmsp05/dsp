@@ -41,6 +41,7 @@ class PeakSet:
     amp_db: np.ndarray          #: Amplitud en dB.
     prominence_db: np.ndarray   #: Prominencia de cada pico [dB].
     threshold_db: float = 0.0   #: Prominencia mínima utilizada [dB].
+    f_rotation: float = 0.0     #: Frecuencia 1X usada para los armónicos [Hz].
     removed_harmonics: np.ndarray = field(
         default_factory=lambda: np.empty(0)
     )                           #: Frecuencias descartadas por ser armónicos.
@@ -97,9 +98,47 @@ def estimate_noise_prominence(
     return prominence
 
 
+def refine_rotation_frequency(
+    freq: np.ndarray,
+    psd: np.ndarray,
+    rpm: float,
+    search_rel: float = 0.05,
+) -> float:
+    """Estima la frecuencia de rotación real (1X) a partir de la PSD.
+
+    La velocidad real del ensayo nunca coincide exactamente con la nominal
+    del nombre del archivo (deslizamiento del motor, regulación, etc.). Como
+    en un rotor desbalanceado la 1X es el pico dominante, se busca el máximo
+    de la PSD en una banda de ±``search_rel`` alrededor de la 1X nominal y
+    esa frecuencia se toma como 1X real para el cálculo de armónicos.
+
+    Parameters
+    ----------
+    freq, psd : np.ndarray
+        PSD lineal y su vector de frecuencias.
+    rpm : float
+        Velocidad de rotación nominal [rpm].
+    search_rel : float
+        Semiancho relativo de la banda de búsqueda (0.05 = ±5 %).
+
+    Returns
+    -------
+    float
+        Frecuencia de rotación estimada [Hz]. Si la banda queda fuera del
+        rango de análisis se devuelve la nominal ``rpm / 60``.
+    """
+    f_nom = rpm / 60.0
+    mask = (freq >= f_nom * (1.0 - search_rel)) & (freq <= f_nom * (1.0 + search_rel))
+    if not np.any(mask):
+        return f_nom
+    f_ref = float(freq[mask][np.argmax(psd[mask])])
+    logger.debug("1X refinada: nominal %.3f Hz -> real %.3f Hz", f_nom, f_ref)
+    return f_ref
+
+
 def remove_harmonic_peaks(
     peak_freqs: np.ndarray,
-    rpm: float,
+    f1: float,
     max_order: int,
     tol_hz: float,
     tol_rel: float,
@@ -107,14 +146,14 @@ def remove_harmonic_peaks(
     """Devuelve una máscara booleana que descarta los picos armónicos.
 
     Un pico se descarta si está a menos de ``max(tol_hz, tol_rel * n * f1)``
-    de algún armónico ``n * f1`` con ``f1 = rpm / 60``.
+    de algún armónico ``n * f1``.
 
     Parameters
     ----------
     peak_freqs : np.ndarray
         Frecuencias de los picos [Hz].
-    rpm : float
-        Velocidad de rotación [rpm].
+    f1 : float
+        Frecuencia de rotación [Hz] (nominal o refinada de la PSD).
     max_order : int
         Máximo orden de armónico a eliminar (1X..NX).
     tol_hz : float
@@ -127,10 +166,9 @@ def remove_harmonic_peaks(
     np.ndarray
         Máscara booleana: True = conservar el pico.
     """
-    if rpm <= 0 or len(peak_freqs) == 0:
+    if f1 <= 0 or len(peak_freqs) == 0:
         return np.ones(len(peak_freqs), dtype=bool)
 
-    f1 = rpm / 60.0
     keep = np.ones(len(peak_freqs), dtype=bool)
     for n in range(1, max_order + 1):
         f_harm = n * f1
@@ -156,6 +194,8 @@ def detect_peaks(
     harmonics_max_order: int = 5,
     harmonics_tol_hz: float = 1.0,
     harmonics_tol_rel: float = 0.01,
+    harmonics_refine_f1: bool = True,
+    harmonics_refine_search_rel: float = 0.05,
 ) -> PeakSet:
     """Detecta picos en una PSD mediante ``scipy.signal.find_peaks``.
 
@@ -183,6 +223,11 @@ def detect_peaks(
         Descarta los picos coincidentes con armónicos de la rotación.
     harmonics_max_order, harmonics_tol_hz, harmonics_tol_rel
         Parámetros de la eliminación de armónicos.
+    harmonics_refine_f1 : bool
+        Estimar la 1X real desde la PSD en lugar de usar la RPM nominal
+        (ver :func:`refine_rotation_frequency`).
+    harmonics_refine_search_rel : float
+        Semiancho relativo de la banda de búsqueda de la 1X real.
 
     Returns
     -------
@@ -218,9 +263,14 @@ def detect_peaks(
 
     # Eliminación opcional de armónicos de la velocidad de rotación.
     removed = np.empty(0)
-    if remove_harmonics and rpm is not None:
+    f1 = (rpm / 60.0) if rpm else 0.0
+    if remove_harmonics and rpm is not None and rpm > 0:
+        if harmonics_refine_f1:
+            f1 = refine_rotation_frequency(
+                freq, psd, rpm, search_rel=harmonics_refine_search_rel
+            )
         keep = remove_harmonic_peaks(
-            peak_freq, rpm, harmonics_max_order, harmonics_tol_hz, harmonics_tol_rel
+            peak_freq, f1, harmonics_max_order, harmonics_tol_hz, harmonics_tol_rel
         )
         removed = peak_freq[~keep]
         peak_freq, peak_amp = peak_freq[keep], peak_amp[keep]
@@ -239,5 +289,6 @@ def detect_peaks(
         amp_db=peak_amp_db,
         prominence_db=peak_prom,
         threshold_db=threshold,
+        f_rotation=f1,
         removed_harmonics=removed,
     )

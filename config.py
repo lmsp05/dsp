@@ -133,8 +133,8 @@ PEAK_PROMINENCE_DB: float = 6.0
 
 #: Parámetros del modo automático: prominencia = max(AUTO_MIN_DB,
 #: AUTO_FACTOR * sigma_ruido), con sigma_ruido estimado de forma robusta.
-PEAK_AUTO_FACTOR: float = 4.0
-PEAK_AUTO_MIN_DB: float = 3.0
+PEAK_AUTO_FACTOR: float = 6.0
+PEAK_AUTO_MIN_DB: float = 6.0
 
 #: Tamaño de la ventana [Hz] de la mediana móvil usada para estimar el piso
 #: de ruido en el modo automático.
@@ -152,7 +152,7 @@ PEAK_HEIGHT_DB: float | None = None
 
 #: Número máximo de picos a conservar por PSD (los de mayor prominencia).
 #: ``None`` conserva todos los detectados.
-PEAK_MAX_PEAKS: int | None = 20
+PEAK_MAX_PEAKS: int | None = 10
 
 # ---------------------------------------------------------------------------
 # 5. Agrupamiento de frecuencias y persistencia
@@ -164,29 +164,41 @@ CLUSTER_TOLERANCE_HZ: float = 1.0
 
 #: Persistencia mínima (0-1) para que un grupo aparezca en el diagrama de
 #: Campbell y en los resúmenes finales.
-MIN_PERSISTENCE: float = 0.3
+MIN_PERSISTENCE: float = 0.5
 
 #: Número mínimo de apariciones para que un grupo sea considerado
 #: (protege frente a picos espurios cuando hay pocas condiciones).
-MIN_APPEARANCES: int = 2
+MIN_APPEARANCES: int = 3
 
 # ---------------------------------------------------------------------------
 # 6. Eliminación opcional de armónicos de la velocidad de rotación
 # ---------------------------------------------------------------------------
 
 #: Si es True, los picos situados sobre los armónicos 1X, 2X, ... NX de la
-#: frecuencia de rotación se descartan (son excitación forzada, no modos).
-REMOVE_HARMONICS: bool = False
+#: frecuencia de rotación se descartan (son excitación forzada por el
+#: desbalance, no modos estructurales). En un rotor desbalanceado la 1X y
+#: sus armónicos dominan la PSD, por lo que sin este filtro acaparan el
+#: diagrama de Campbell con persistencia máxima.
+REMOVE_HARMONICS: bool = True
 
 #: Número de armónicos a eliminar (1X hasta NX).
-HARMONICS_MAX_ORDER: int = 5
+HARMONICS_MAX_ORDER: int = 10
 
 #: Tolerancia absoluta [Hz] alrededor de cada armónico.
-HARMONICS_TOL_HZ: float = 1.0
+HARMONICS_TOL_HZ: float = 1.5
 
 #: Tolerancia relativa (fracción de la frecuencia del armónico). La tolerancia
 #: efectiva es max(HARMONICS_TOL_HZ, HARMONICS_TOL_REL * n * f_rot).
-HARMONICS_TOL_REL: float = 0.01
+HARMONICS_TOL_REL: float = 0.02
+
+#: Refinar la frecuencia de rotación real a partir de la propia PSD: se busca
+#: el pico más alto en una banda de ±5 % alrededor de la 1X nominal (RPM/60)
+#: y los armónicos se calculan sobre esa frecuencia. Compensa la diferencia
+#: entre la velocidad nominal del nombre del archivo y la velocidad real.
+HARMONICS_REFINE_F1: bool = True
+
+#: Semiancho relativo de la banda de búsqueda de la 1X real.
+HARMONICS_REFINE_SEARCH_REL: float = 0.05
 
 # ---------------------------------------------------------------------------
 # 7. Gráficos y salidas

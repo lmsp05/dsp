@@ -101,6 +101,16 @@ def plot_psd_with_peaks(
     if scale == "log":
         ax.set_yscale("log")
 
+    # Picos descartados por coincidir con armónicos de la rotación (grises).
+    if len(peaks.removed_harmonics):
+        y_harm = np.interp(peaks.removed_harmonics, freq, y)
+        ax.plot(
+            peaks.removed_harmonics, y_harm, "x", color="0.55",
+            markersize=6, linestyle="none",
+        )
+        for fx in peaks.removed_harmonics:
+            ax.axvline(fx, color="0.85", linewidth=0.6, zorder=0)
+
     if len(peaks):
         y_pk = _psd_to_plot_scale(peaks.amp, scale)
         ax.plot(
@@ -124,8 +134,12 @@ def plot_psd_with_peaks(
 
     ax.set_xlabel("Frecuencia [Hz]")
     ax.set_ylabel("PSD [dB re 1 u²/Hz]" if scale == "db" else "PSD [u²/Hz]")
-    ax.set_title(f"{title}  ·  {len(peaks)} picos (prominencia ≥ "
-                 f"{peaks.threshold_db:.1f} dB)")
+    subtitle = (f"{len(peaks)} picos (prominencia ≥ "
+                f"{peaks.threshold_db:.1f} dB)")
+    if len(peaks.removed_harmonics):
+        subtitle += (f" · {len(peaks.removed_harmonics)} armónicos "
+                     f"descartados (1X = {peaks.f_rotation:.2f} Hz)")
+    ax.set_title(f"{title}  ·  {subtitle}")
     ax.set_xlim(freq[0], freq[-1])
     ax.margins(y=0.12)
     _save(fig, path, dpi)

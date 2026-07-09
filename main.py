@@ -139,6 +139,8 @@ def process_file(task: tuple[FileInfo, dict]) -> dict:
             harmonics_max_order=p["harmonics_max_order"],
             harmonics_tol_hz=p["harmonics_tol_hz"],
             harmonics_tol_rel=p["harmonics_tol_rel"],
+            harmonics_refine_f1=p["harmonics_refine_f1"],
+            harmonics_refine_search_rel=p["harmonics_refine_search_rel"],
         )
         return {"info": info, "freq": psd_res.freq, "psd": psd_res.psd,
                 "peaks": peaks}
@@ -175,6 +177,8 @@ def build_params(sensor: str) -> dict:
         "harmonics_max_order": config.HARMONICS_MAX_ORDER,
         "harmonics_tol_hz": config.HARMONICS_TOL_HZ,
         "harmonics_tol_rel": config.HARMONICS_TOL_REL,
+        "harmonics_refine_f1": config.HARMONICS_REFINE_F1,
+        "harmonics_refine_search_rel": config.HARMONICS_REFINE_SEARCH_REL,
     }
 
 
