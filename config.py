@@ -21,16 +21,24 @@ Los parámetros se agrupan por etapa del análisis:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 # ---------------------------------------------------------------------------
 # 1. Rutas y estructura de la base de datos
 # ---------------------------------------------------------------------------
 
+#: Carpeta del proyecto (donde está este archivo). Las rutas por defecto se
+#: anclan aquí para que los resultados aparezcan siempre junto al código,
+#: independientemente del directorio desde el que se ejecute ``main.py``.
+PROJECT_ROOT: Path = Path(__file__).resolve().parent
+
 #: Carpeta raíz que contiene las carpetas de condiciones experimentales
 #: (rep1_iso32_dsb1, rep1_iso32_dsb2, ..., rep3_iso68_dsb3).
-DATA_DIR: str = "data"
+#: Puede ser una ruta absoluta (p. ej. r"C:\ensayos\rotor" o "/datos/rotor").
+DATA_DIR: str = str(PROJECT_ROOT / "data")
 
 #: Carpeta donde se guardan todos los resultados (CSV y figuras).
-OUTPUT_DIR: str = "results"
+OUTPUT_DIR: str = str(PROJECT_ROOT / "results")
 
 #: Patrón (expresión regular) para extraer los metadatos de la carpeta:
 #: repetición, viscosidad (grado ISO) y desbalance.
