@@ -17,6 +17,7 @@ de amplitud **y** fase.
 |---|---|
 | `procesar_fft.py` | Recorre la carpeta de datos, procesa cada archivo y escribe un `.txt` tabular con el espectro de los 4 proximitores. |
 | `txt_a_npy.py` | Convierte ese `.txt` en un `.npy` (array estructurado de numpy) fácil de filtrar. |
+| `revision_rpms.py` | **Diagnóstico** de la RPM y de la segmentación: una figura por archivo (RPM vs tiempo, bloques, tramos aceptados/rechazados/seleccionado) + un CSV de métricas de dispersión. |
 
 Solo requiere `numpy` (y `scipy` no es necesario: la FFT se hace con
 `numpy.fft`).
@@ -57,6 +58,41 @@ RAW_DATA/
 * Del **nombre del archivo** se extrae la RPM nominal (`...Rpm600.txt` → 600).
 * De cada archivo se leen solo los proximitores `P1.Y, P1.X, P2.Y, P2.X`
   (el keyphasor se usa para la RPM y el acelerómetro `S1` se ignora).
+
+## Diagnóstico de RPM (`revision_rpms.py`)
+
+Si la RPM promedio medida se aparta más de lo esperado de la nominal, este
+script lo explica. Para cada archivo genera una figura con:
+
+* la RPM instantánea (pulso a pulso) frente al tiempo;
+* la RPM media por bloque de `bloque_s` (lo que alimenta la segmentación) y los
+  **splits** donde el cambio supera el umbral, con el % anotado;
+* todos los tramos candidatos: **verde** = aceptado, **rojo** = rechazado (con el
+  motivo), **marco dorado** = el finalmente seleccionado, cada uno con duración,
+  media, mediana y coeficiente de variación;
+* el histograma de la RPM instantánea con las métricas de dispersión, resaltando
+  **media vs mediana** y los outliers.
+
+```bash
+python revision_rpms.py --data-dir /ruta/a/RAW_DATA --outdir revision_rpms
+```
+
+Además escribe `revision_rpms/revision_rpms_metricas.csv` con una fila `GLOBAL`
+por archivo y una fila por tramo candidato (filtrable).
+
+**Clave para tu preocupación:** `procesar_fft.py` reporta como RPM del tramo la
+**media** de la RPM instantánea. La media se dispara con muy pocos pulsos
+espurios/perdidos del keyphasor (un pulso doble da una RPM instantánea de decenas
+de miles), mientras que la **mediana** casi no se ve afectada. En este
+diagnóstico:
+
+* si dentro del tramo **media ≈ mediana**, la velocidad medida es de fiar y la
+  diferencia con la nominal es real (p. ej. el rotor giraba a 596, no a 600);
+* si **media ≫ mediana** (o hay outliers), el problema es de detección de pulsos:
+  conviene usar la mediana o filtrar los pulsos espurios. Ojo también con el caso
+  de un **escalón de RPM** dentro del registro: ahí la media *global* se aleja de
+  la nominal por mezclar dos velocidades, pero la media del **tramo seleccionado**
+  (una sola velocidad) sí es correcta.
 
 ## Formato de salida (`.txt`)
 
