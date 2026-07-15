@@ -18,6 +18,8 @@ de amplitud **y** fase.
 | `procesar_fft.py` | Recorre la carpeta de datos, procesa cada archivo y escribe un `.txt` tabular con el espectro de los 4 proximitores. |
 | `txt_a_npy.py` | Convierte ese `.txt` en un `.npy` (array estructurado de numpy) fácil de filtrar. |
 | `revision_rpms.py` | **Diagnóstico** de la RPM y de la segmentación: una figura por archivo (RPM vs tiempo, bloques, tramos aceptados/rechazados/seleccionado) + un CSV de métricas de dispersión. |
+| `rpm_instantaneas.py` | Script sencillo: guarda la RPM instantánea (pulso a pulso) de cada archivo con su condición, en un `.txt`. |
+| `deteccion_picos.py` | Lee los espectros de `procesar_fft.py` y detecta picos (procedimiento de `x0302_nf_gph_transformations.m`): tabla `omega1, omega2, …` + diagrama de dispersión frecuencia-vs-velocidad. |
 
 Solo requiere `numpy` (y `scipy` no es necesario: la FFT se hace con
 `numpy.fft`).
@@ -93,6 +95,41 @@ diagnóstico:
   de un **escalón de RPM** dentro del registro: ahí la media *global* se aleja de
   la nominal por mezclar dos velocidades, pero la media del **tramo seleccionado**
   (una sola velocidad) sí es correcta.
+
+## Detección de picos (`deteccion_picos.py`)
+
+Lee `resultados_fft.txt` (o `.npy`) y detecta los picos de **cada espectro**
+replicando el procedimiento de `x0302_nf_gph_transformations.m`. En el `.m`, la
+detección por espectro es el bucle de *ridge detection*:
+
+```matlab
+[~,locs] = findpeaks(row, 'MinPeakProminence', max(row)*0.1, 'MinPeakDistance', 5);
+```
+
+que aquí es `scipy.signal.find_peaks` sobre la amplitud lineal con
+`prominence = max(amplitud) * fraccion` (0.1 por defecto) y `distance = 5` bins.
+Los picos se ordenan por frecuencia ascendente → `omega1, omega2, …`.
+
+```bash
+python deteccion_picos.py --entrada resultados_fft.txt --outdir .
+# parámetros del criterio (por defecto los del .m)
+python deteccion_picos.py --entrada resultados_fft.npy --fraccion 0.1 --dist-bins 5 --fmax 300
+```
+
+Genera, en la carpeta de salida:
+
+* **`picos_detectados.txt`** — tabla con una fila por archivo·sensor:
+  `rep  iso  dsb  rpm  sensor  omega1  omega2  …  omegaN`
+  (celdas vacías donde ese espectro tiene menos picos).
+* **`picos_scatter.png`** — dispersión frecuencia (Y) vs velocidad (X), con
+  **color = viscosidad ISO** y **forma = desbalance dsb**, y líneas de orden
+  1X/2X/3X de referencia.
+* **`picos_scatter_<sensor>.png`** — la misma dispersión, un archivo por sensor.
+
+> Nota: como en el `.m`, la prominencia es **relativa al máximo de cada
+> espectro**. Si el 1X domina mucho (p. ej. con desbalance alto), los picos más
+> débiles pueden quedar por debajo del umbral y no detectarse; baja `--fraccion`
+> si quieres capturarlos.
 
 ## Formato de salida (`.txt`)
 
