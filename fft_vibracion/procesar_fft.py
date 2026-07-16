@@ -162,33 +162,61 @@ def leer_archivo(path: Path) -> tuple[np.ndarray, list[str]]:
 # KEYPHASOR: DETECCION DE PULSOS Y RPM INSTANTANEA
 # ============================================================
 
-def detectar_pulsos(sync: np.ndarray) -> np.ndarray:
-    """Deteccion de flancos de subida del keyphasor con histeresis.
+def detectar_pulsos(sync: np.ndarray,
+                    frac_disparo: float = 0.25,
+                    frac_rearme: float = 0.12) -> np.ndarray:
+    """Deteccion de flancos de subida del keyphasor con histeresis real.
 
-    Generaliza la deteccion del prototipo (que asumia saturacion exacta en -1):
-    fija el umbral en el punto medio del rango del canal y aplica una banda
-    muerta para no duplicar pulsos por ruido. Ademas elimina flancos demasiado
-    juntos (< 0.5 x el espaciado mediano).
+    El umbral de DISPARO se coloca BAJO: base + frac_disparo * (max - base).
+    Para el hardware tipico de este dataset (base saturada en -1 V, pulsos de
+    ~3 V) equivale a cruzar por ~0 V, igual que la deteccion de referencia
+    (tach < 0 -> >= 0). Un umbral alto (50-60 % del rango) PIERDE los pulsos
+    cortos cuya cresta muestreada queda baja (a 12800 Hz un pulso de <0.5 ms
+    tiene pocas muestras y su maximo muestreado varia pulso a pulso); cada
+    pulso perdido duplica el intervalo y produce RPM instantaneas en
+    rpm/2, rpm/3, ... que hunden la media del bloque.
+
+    La HISTERESIS evita el problema contrario (duplicar pulsos por ruido):
+    tras un disparo, el detector solo se rearma cuando la senal cae por
+    debajo de base + frac_rearme * (max - base).
     """
-    # Base = mediana (el canal pasa casi todo el tiempo en su nivel de reposo);
-    # pico = maximo. Es robusto aunque los pulsos sean muy escasos (pocas
-    # muestras por pulso), a diferencia de un percentil alto.
+    # Base = mediana (el canal pasa casi todo el tiempo en reposo);
+    # pico = maximo. Robusto aunque los pulsos sean muy escasos.
     lo = float(np.median(sync))
     hi = float(np.max(sync))
-    if hi - lo < 1e-9:
+    rango = hi - lo
+    if rango < 1e-9:
         raise ValueError("El canal de sincronismo no varia; no hay pulsos.")
-    thr = lo + 0.5 * (hi - lo)
-    banda = 0.1 * (hi - lo)
-    encima = sync > (thr + banda)
-    flancos = np.where(np.diff(encima.astype(np.int8)) == 1)[0] + 1
-    if len(flancos) < 3:
+    thr_alto = lo + frac_disparo * rango
+    thr_bajo = lo + frac_rearme * rango
+
+    # Eventos de cruce (vectorizado): subidas por thr_alto y bajadas por thr_bajo.
+    sube = np.where((sync[:-1] <= thr_alto) & (sync[1:] > thr_alto))[0] + 1
+    baja = np.where((sync[:-1] >= thr_bajo) & (sync[1:] < thr_bajo))[0] + 1
+    if len(sube) < 3:
         raise ValueError("No se detectaron suficientes pulsos de keyphasor.")
-    d = np.diff(flancos)
-    med = np.median(d)
-    limpio = [flancos[0]]
-    for p in flancos[1:]:
-        if p - limpio[-1] > 0.5 * med:
-            limpio.append(p)
+
+    # Histeresis: se acepta una subida solo si hubo un rearme (bajada) despues
+    # de la ultima subida aceptada. Merge lineal de ambos trenes de eventos.
+    pulsos = [int(sube[0])]
+    j = 0
+    nb = len(baja)
+    for s in sube[1:]:
+        while j < nb and baja[j] < pulsos[-1]:
+            j += 1
+        if j < nb and baja[j] < s:      # hubo rearme entre el ultimo pulso y este
+            pulsos.append(int(s))
+    if len(pulsos) < 3:
+        raise ValueError("No se detectaron suficientes pulsos de keyphasor.")
+
+    # Red de seguridad contra dobles residuales por ruido en el flanco: descarta
+    # pulsos a menos de 0.4 x el espaciado mediano del anterior.
+    p = np.asarray(pulsos, dtype=int)
+    med = float(np.median(np.diff(p)))
+    limpio = [int(p[0])]
+    for x in p[1:]:
+        if x - limpio[-1] > 0.4 * med:
+            limpio.append(int(x))
     return np.asarray(limpio, dtype=int)
 
 

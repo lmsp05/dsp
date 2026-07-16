@@ -84,18 +84,23 @@ Además escribe `revision_rpms/revision_rpms_metricas.csv` con una fila `GLOBAL`
 por archivo y una fila por tramo candidato (filtrable).
 
 **Clave para tu preocupación:** `procesar_fft.py` reporta como RPM del tramo la
-**media** de la RPM instantánea. La media se dispara con muy pocos pulsos
-espurios/perdidos del keyphasor (un pulso doble da una RPM instantánea de decenas
-de miles), mientras que la **mediana** casi no se ve afectada. En este
-diagnóstico:
+**media** de la RPM instantánea, y la media es muy sensible a errores de
+detección de pulsos del keyphasor, en ambos sentidos:
 
-* si dentro del tramo **media ≈ mediana**, la velocidad medida es de fiar y la
-  diferencia con la nominal es real (p. ej. el rotor giraba a 596, no a 600);
-* si **media ≫ mediana** (o hay outliers), el problema es de detección de pulsos:
-  conviene usar la mediana o filtrar los pulsos espurios. Ojo también con el caso
-  de un **escalón de RPM** dentro del registro: ahí la media *global* se aleja de
-  la nominal por mezclar dos velocidades, pero la media del **tramo seleccionado**
-  (una sola velocidad) sí es correcta.
+* **Pulsos perdidos** → intervalos dobles/triples → RPM instantáneas en
+  **rpm/2, rpm/3, …** que **hunden** la media (síntoma: bandas horizontales en
+  ½, ⅓, ¼ de la nominal en el gráfico de RPM). Causa típica: umbral de disparo
+  demasiado alto para pulsos cortos cuya cresta muestreada varía. La detección
+  actual usa un umbral **bajo** (25 % del rango, equivalente al cruce por 0 V
+  del hardware de este dataset) con **histéresis**, precisamente para evitarlo.
+* **Pulsos dobles** → intervalos diminutos → RPM instantáneas gigantes que
+  **inflan** la media. La histéresis + la separación mínima los eliminan.
+
+En el diagnóstico: si dentro del tramo **media ≈ mediana**, la velocidad medida
+es de fiar y la diferencia con la nominal es real; si difieren (o hay outliers),
+es un artefacto de detección de pulsos. Ojo también con un **escalón de RPM**
+dentro del registro: la media *global* se aleja de la nominal por mezclar dos
+velocidades, pero la del **tramo seleccionado** sí es correcta.
 
 ## Detección de picos (`deteccion_picos.py`)
 
