@@ -21,6 +21,8 @@ de amplitud **y** fase.
 | `rpm_instantaneas.py` | Script sencillo: guarda la RPM instantánea (pulso a pulso) de cada archivo con su condición, en un `.txt`. |
 | `deteccion_picos.py` | Lee los espectros de `procesar_fft.py` y detecta picos (procedimiento de `x0302_nf_gph_transformations.m`): tabla `omega1, omega2, …` + diagrama de dispersión frecuencia-vs-velocidad. |
 | `inspeccionar_espectro.py` | Inspección visual de **una** condición (rep/iso/dsb/rpm/sensor): espectro original, espectro sin 1X/armónicos y picos detectados con sus métricas, en una figura de 3 paneles. |
+| `deteccion_picos_vs/` | 4 **variantes** de detección que promedian espectros a distintos niveles (entre sensores, entre velocidades, global; con o sin eliminación de 1X/armónicos). Ver su propio README. |
+| `comparar_deteccion_picos.py` | Ejecuta la detección original y las 4 variantes de una vez, cada una en su subcarpeta. |
 
 Solo requiere `numpy` (y `scipy` no es necesario: la FFT se hace con
 `numpy.fft`).
