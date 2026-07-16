@@ -14,8 +14,28 @@ solo fija: **sobre qué se promedia**, **si elimina o no** el 1X/armónicos y el
 | `v3_prom_sensores_velocidades_sin_elim.py` | sensores + velocidades (por rep·iso·dsb) | **No** | frecuencia vs condición | 1 por rep·iso·dsb |
 | `v4_prom_global_sin_elim.py` | **todo** (sensores + condiciones + velocidades) | **No** | espectro promedio con picos | 1 (global) |
 
-El promediado se hace interpolando cada espectro a una **grilla de frecuencia
-común** (las distintas RPM tienen distinto `df`); en las variantes con
+### `metricas_cascada.py` — RMS + Kurtosis + Ridge (portado del `.m`)
+
+Método **distinto** (no promedia): apila la cascada `Z` (filas = RPM, columnas =
+frecuencia) por condición y calcula tres métricas **atravesando las RPM**,
+aprovechando que una natural es fija con la velocidad y el 1X/armónicos se mueven:
+
+* **RMS(f)** = `sqrt(mean_rpm(Z²))`
+* **Kurtosis(f)** = curtosis sobre las RPM (Pearson, como MATLAB)
+* **Ridge(f)** = en cuántas RPM hay un pico local en esa frecuencia (persistencia
+  de crestas). Es el mejor detector de naturales: aparecen en casi todas las RPM.
+
+Portado de `x0302_nf_gph_transformations.m` (mismas fracciones de prominencia:
+RMS 5 %, Kurtosis 10 %, Ridge 20 %). Genera, **por condición** (rep·iso·dsb·sensor)
+y dentro de `--outdir`: `metricas_<condicion>.txt` (frecuencias por método) y
+`metricas_<condicion>.png` (las 3 métricas con sus picos + la cascada con las
+frecuencias marcadas). Necesita ≥2 RPM por condición y funciona igual sobre el
+full spectrum complejo. También la ejecuta `comparar_deteccion_picos.py`.
+
+---
+
+En las variantes de promediado, el promedio se hace interpolando cada espectro a
+una **grilla de frecuencia común** (las distintas RPM tienen distinto `df`); en las variantes con
 eliminación, el 1X y los armónicos se quitan de **cada espectro individual**
 (con su propia RPM) *antes* de promediar, de modo que las frecuencias naturales
 (que no se mueven con la RPM) se refuerzan y el resto se promedia.

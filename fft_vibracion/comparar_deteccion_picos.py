@@ -33,6 +33,7 @@ VARIANTES = [
     (VS / "v2_prom_sensores_velocidades.py", "v2_prom_sensores_velocidades"),
     (VS / "v3_prom_sensores_velocidades_sin_elim.py", "v3_prom_sensores_velocidades_sin_elim"),
     (VS / "v4_prom_global_sin_elim.py", "v4_prom_global_sin_elim"),
+    (VS / "metricas_cascada.py", "metricas_cascada"),
 ]
 
 
