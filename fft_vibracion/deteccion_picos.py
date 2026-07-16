@@ -32,12 +32,15 @@ de giro) y sus ARMONICOS (2X, 3X, ...), para que la deteccion quede solo con el
 contenido no sincrono (frecuencias naturales, whirl de aceite, etc.). El
 procedimiento (eliminacion adaptativa por hombros):
 
-  1. Se estima la frecuencia de giro real f1: se parte de rpm/60 y se refina
-     tomando la frecuencia de mayor amplitud en una banda +-`band_1x` alrededor
-     (el 1X real puede no caer exacto en rpm/60 nominal).
-  2. Se buscan los MAXIMOS LOCALES del espectro. Un pico es sincrono si su PUNTA
-     (su frecuencia) cae dentro del margen de un orden entero: |freq/f1 - n| <=
-     `tol_orden`, con n = 1..`n_armonicos`.
+  1. Se estima la frecuencia de giro real f1: se parte de rpm/60 y se toma el
+     PICO mas alto en una banda +-`band_1x` alrededor. Usar el pico mas alto y
+     una banda amplia hace la estimacion robusta al sesgo de la RPM medida (la
+     media puede caer un bin o mas por debajo/encima del 1X real).
+  2. Para cada orden n = 1..`n_armonicos` se busca el PICO REAL mas cercano a la
+     posicion esperada n*f1, dentro de una ventana proporcional
+     (win = max(`tol_orden`*n*f1, (piso+1)*df)). Buscar por orden y quedarse con
+     el pico mas cercano tolera el error de f1 y que los armonicos no caigan
+     exactos en n*f1 (anarmonicidad + cuantizacion de bins).
   3. Para cada pico sincrono se detectan sus HOMBROS: se desciende a izquierda y
      derecha hasta el primer minimo local. Se elimina el pico COMPLETO en ese
      intervalo [hombro_izq, hombro_der], sustituyendo la amplitud por la linea
@@ -92,7 +95,7 @@ DIST_BINS = 5                # MinPeakDistance en numero de bins
 # Eliminacion de sincronos/armonicos
 N_ARMONICOS = 10             # ordenes a eliminar: 1X ... NX
 TOL_ORDEN = 0.05             # un pico es sincrono si |punta/f1 - entero| <= tol
-BAND_1X = 0.10               # banda relativa para refinar el 1X real cerca de rpm/60
+BAND_1X = 0.20               # banda relativa para buscar el 1X real cerca de rpm/60
 ANCHO_BINS_NOTCH = 1.0       # piso minimo de medio ancho, en bins (por punta plana)
 
 # Codificacion visual del diagrama de dispersion
@@ -126,15 +129,40 @@ def cargar_espectros(path: Path) -> np.ndarray:
 # DETECCION DE PICOS POR ESPECTRO (procedimiento del .m)
 # ============================================================
 
+def _interp_pico(f: np.ndarray, a: np.ndarray, p: int) -> float:
+    """Frecuencia del pico p con interpolacion parabolica (precision sub-bin)."""
+    if 0 < p < len(a) - 1:
+        y0, y1, y2 = a[p - 1], a[p], a[p + 1]
+        denom = y0 - 2.0 * y1 + y2
+        if denom != 0:
+            delta = 0.5 * (y0 - y2) / denom
+            delta = max(-0.5, min(0.5, delta))
+            return float(f[p] + delta * (f[p + 1] - f[p]))
+    return float(f[p])
+
+
 def _f1_giro(f: np.ndarray, a: np.ndarray, rpm: float, band: float) -> float | None:
-    """Frecuencia de giro real (1X): rpm/60 refinado al maximo local cercano."""
+    """Frecuencia de giro real (1X), con precision sub-bin.
+
+    Parte de rpm/60 como prior y toma el PICO mas alto en una banda +-band
+    alrededor; su posicion se afina por interpolacion parabolica. Usar el pico
+    mas alto, una banda amplia y la interpolacion sub-bin hace robusta la
+    estimacion al sesgo de la RPM medida y evita propagar error a los armonicos
+    altos (n*f1 se mantiene preciso).
+    """
     if not rpm or rpm <= 0:
         return None
-    f1 = rpm / 60.0
-    m = (f >= f1 * (1 - band)) & (f <= f1 * (1 + band))
-    if m.any():
-        f1 = float(f[m][np.argmax(a[m])])
-    return f1
+    f0 = rpm / 60.0
+    m = (f >= f0 * (1 - band)) & (f <= f0 * (1 + band))
+    if not m.any():
+        return f0
+    picos, _ = find_peaks(a)
+    picos_banda = [p for p in picos if m[p]]
+    if picos_banda:
+        p = max(picos_banda, key=lambda p: a[p])   # pico mas alto de la banda
+        return _interp_pico(f, a, p)
+    idx = np.where(m)[0]
+    return _interp_pico(f, a, int(idx[np.argmax(a[idx])]))
 
 
 def _hombros(a: np.ndarray, p: int) -> tuple[int, int]:
@@ -154,10 +182,16 @@ def _mascara_sincrona(f: np.ndarray, a: np.ndarray, f1: float | None, n_max: int
                       tol_orden: float, ancho_bins: float):
     """Marca para eliminacion los picos SINCRONOS por el metodo de hombros.
 
-    Un maximo local es sincrono si su punta cae dentro del margen de un orden
-    entero (|freq/f1 - n| <= tol_orden, n = 1..n_max). Para cada uno se detectan
-    sus hombros y se marca TODO el intervalo del pico. `ancho_bins` impone un piso
-    minimo de medio ancho (en bins) por si la punta es plana o ruidosa.
+    Para cada orden n = 1..n_max se busca el PICO REAL mas cercano a la posicion
+    esperada n*f1, dentro de una ventana MODESTA y constante
+        win = max(tol_orden * f1, 1.5 * df).
+    Si la punta de ese pico cae dentro de la ventana, se detectan sus HOMBROS
+    (primer minimo local a cada lado) y se marca TODO el intervalo del pico.
+    `ancho_bins` impone un piso minimo de medio ancho por si la punta es plana.
+
+    Como f1 se estima con precision sub-bin, n*f1 queda preciso en todos los
+    ordenes, asi que basta una ventana de ~1-2 bins (cuantizacion + leakage) para
+    capturar el armonico sin tragarse frecuencias naturales cercanas a un orden.
 
     Devuelve (mask, intervalos, picos) donde:
       * mask       : bool array de las lineas a eliminar,
@@ -169,18 +203,34 @@ def _mascara_sincrona(f: np.ndarray, a: np.ndarray, f1: float | None, n_max: int
     picos_sinc: list[int] = []
     if not f1 or f1 <= 0 or len(f) < 3:
         return mask, intervalos, picos_sinc
+
+    df = float(np.median(np.diff(f)))
     piso = int(max(0, round(ancho_bins)))
     picos, _ = find_peaks(a)
-    for p in picos:
-        orden = f[p] / f1
-        n = int(round(orden))
-        if 1 <= n <= n_max and abs(orden - n) <= tol_orden:
-            l, r = _hombros(a, p)
-            l = max(0, min(l, p - piso))
-            r = min(len(f) - 1, max(r, p + piso))
-            mask[l:r + 1] = True
-            intervalos.append((l, int(p), r, n))
-            picos_sinc.append(int(p))
+    if len(picos) == 0:
+        return mask, intervalos, picos_sinc
+    fpicos = f[picos]
+
+    usados: set[int] = set()
+    for n in range(1, n_max + 1):
+        centro = n * f1
+        if centro - df > f[-1]:
+            break
+        win = max(tol_orden * f1, 1.5 * df)
+        d = np.abs(fpicos - centro)
+        j = int(np.argmin(d))
+        if d[j] > win:
+            continue
+        p = int(picos[j])
+        if p in usados:
+            continue
+        usados.add(p)
+        l, r = _hombros(a, p)
+        l = max(0, min(l, p - piso))
+        r = min(len(f) - 1, max(r, p + piso))
+        mask[l:r + 1] = True
+        intervalos.append((l, p, r, n))
+        picos_sinc.append(p)
     return mask, intervalos, picos_sinc
 
 

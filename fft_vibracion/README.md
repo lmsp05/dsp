@@ -115,11 +115,15 @@ Los picos se ordenan por frecuencia ascendente → `omega1, omega2, …`.
 antes de detectar, se quitan del espectro las líneas de giro y sus armónicos,
 para que los `omega` sean solo contenido no síncrono (frecuencias naturales):
 
-1. Se estima el **1X real**: se parte de `rpm/60` (usando la RPM *medida* del
-   `.txt` si está) y se refina al máximo local en una banda `±band_1x`.
-2. Se buscan los **máximos locales** del espectro. Un pico es síncrono si su
-   **punta** cae dentro del margen de un orden entero: `|freq/f1 - n| ≤ tol_orden`
-   con `n = 1…n_armonicos`.
+1. Se estima el **1X real** con precisión **sub-bin**: se parte de `rpm/60`
+   (usando la RPM *medida* del `.txt` si está), se toma el **pico más alto** en
+   una banda `±band_1x` y se afina por interpolación parabólica. Esto lo hace
+   robusto al **sesgo de la RPM medida** (la media puede caer un bin o más por
+   debajo/encima del 1X real) y evita propagar error a los armónicos altos.
+2. Para cada orden `n = 1…n_armonicos` se busca el **pico real más cercano** a
+   `n·f1` dentro de una ventana modesta `win = máx(tol_orden·f1, 1.5·df)`. Buscar
+   por orden y quedarse con el pico más cercano tolera la cuantización de bins y
+   el leakage sin tragarse naturales cercanas a un orden.
 3. Para cada pico síncrono se detectan sus **hombros** (se desciende a cada lado
    hasta el primer mínimo local) y se elimina el pico **completo** en ese
    intervalo, sustituyéndolo por la **línea base interpolada**. `ancho_bins` es
