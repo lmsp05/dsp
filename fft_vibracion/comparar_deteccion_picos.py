@@ -27,13 +27,21 @@ AQUI = Path(__file__).resolve().parent
 VS = AQUI / "deteccion_picos_vs"
 
 # (ruta del script, nombre de la subcarpeta de salida)
+# (ruta, nombre de subcarpeta, args fijos extra)
+MET = VS / "metricas_versiones.py"
 VARIANTES = [
-    (AQUI / "deteccion_picos.py", "deteccion_picos"),
-    (VS / "v1_prom_sensores.py", "v1_prom_sensores"),
-    (VS / "v2_prom_sensores_velocidades.py", "v2_prom_sensores_velocidades"),
-    (VS / "v3_prom_sensores_velocidades_sin_elim.py", "v3_prom_sensores_velocidades_sin_elim"),
-    (VS / "v4_prom_global_sin_elim.py", "v4_prom_global_sin_elim"),
-    (VS / "metricas_cascada.py", "metricas_cascada"),
+    (AQUI / "deteccion_picos.py", "deteccion_picos", []),
+    (VS / "v1_prom_sensores.py", "v1_prom_sensores", []),
+    (VS / "v2_prom_sensores_velocidades.py", "v2_prom_sensores_velocidades", []),
+    (VS / "v3_prom_sensores_velocidades_sin_elim.py", "v3_prom_sensores_velocidades_sin_elim", []),
+    (VS / "v4_prom_global_sin_elim.py", "v4_prom_global_sin_elim", []),
+    (VS / "metricas_cascada.py", "metricas_cascada", []),
+    # metricas RMS/Kurtosis/Ridge en las 5 configuraciones v0..v4
+    (MET, "metricas_v0", ["--modo", "v0"]),
+    (MET, "metricas_v1", ["--modo", "v1"]),
+    (MET, "metricas_v2", ["--modo", "v2"]),
+    (MET, "metricas_v3", ["--modo", "v3"]),
+    (MET, "metricas_v4", ["--modo", "v4"]),
 ]
 
 
@@ -56,10 +64,11 @@ def main() -> int:
     print()
 
     n_ok = 0
-    for script, nombre in VARIANTES:
+    for script, nombre, fijos in VARIANTES:
         sub = outdir / nombre
         sub.mkdir(parents=True, exist_ok=True)
-        cmd = [sys.executable, str(script), "--entrada", entrada, "--outdir", str(sub)] + extra
+        cmd = ([sys.executable, str(script), "--entrada", entrada, "--outdir", str(sub)]
+               + fijos + extra)
         print(f"=== {nombre} ===")
         res = subprocess.run(cmd)
         if res.returncode == 0:

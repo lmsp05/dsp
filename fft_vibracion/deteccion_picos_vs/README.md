@@ -48,6 +48,33 @@ detección (`--fraccion`, `--n-armonicos`, …) que `deteccion_picos.py`.
 python deteccion_picos_vs/v1_prom_sensores.py --entrada resultados_fft.txt --outdir v1
 ```
 
+### `metricas_versiones.py` — las 3 métricas en las 5 configuraciones v0…v4
+
+Aplica RMS/Kurtosis/Ridge en las **mismas 5 configuraciones** que las variantes,
+seleccionadas con `--modo`. Las métricas agregan un conjunto de espectros, y en
+cada modo el conjunto es lo que esa versión combina:
+
+| `--modo` | conjunto de la métrica | se detecta por | eliminación | gráfica |
+|---|---|---|---|---|
+| `v0` | las RPM (cascada) | condición · sensor | **Sí** | cuadrícula 5×4 (métodos × sensores) por condición |
+| `v1` | los 4 sensores | condición · velocidad | **Sí** | Campbell (freq vs RPM) |
+| `v2` | sensores + velocidades | condición | **Sí** | freq vs condición |
+| `v3` | sensores + velocidades | condición | **No** | freq vs condición |
+| `v4` | todos los espectros | global | **No** | curva métrica vs freq |
+
+Para v1–v4 genera, en `--outdir`: `picos_RMS.png`, `picos_Kurtosis.png`,
+`picos_Ridge.png`, `picos_combinado.png` y `picos_detectados.txt`. Para v0 genera
+una `v0grid_<condicion>.png` por condición (5 filas = prominencia, RMS, Kurtosis,
+Ridge, combinado; 4 columnas = sensores) más el `.txt`.
+
+```bash
+python deteccion_picos_vs/metricas_versiones.py --modo v1 --entrada resultados_fft.txt --outdir mv1
+```
+
+> Nota: RMS y Ridge son los detectores robustos de naturales; la **Kurtosis**
+> necesita variabilidad real entre los miembros del conjunto (con sensores muy
+> correlacionados o pocas RPM sale degenerada).
+
 ## Ejecutar todas a la vez
 
 Desde la carpeta padre, `comparar_deteccion_picos.py` corre la original y las 4
