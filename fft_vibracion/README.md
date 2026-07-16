@@ -20,6 +20,7 @@ de amplitud **y** fase.
 | `revision_rpms.py` | **Diagnóstico** de la RPM y de la segmentación: una figura por archivo (RPM vs tiempo, bloques, tramos aceptados/rechazados/seleccionado) + un CSV de métricas de dispersión. |
 | `rpm_instantaneas.py` | Script sencillo: guarda la RPM instantánea (pulso a pulso) de cada archivo con su condición, en un `.txt`. |
 | `deteccion_picos.py` | Lee los espectros de `procesar_fft.py` y detecta picos (procedimiento de `x0302_nf_gph_transformations.m`): tabla `omega1, omega2, …` + diagrama de dispersión frecuencia-vs-velocidad. |
+| `inspeccionar_espectro.py` | Inspección visual de **una** condición (rep/iso/dsb/rpm/sensor): espectro original, espectro sin 1X/armónicos y picos detectados con sus métricas, en una figura de 3 paneles. |
 
 Solo requiere `numpy` (y `scipy` no es necesario: la FFT se hace con
 `numpy.fft`).
@@ -155,6 +156,28 @@ Genera, en la carpeta de salida:
 > un armónico (p. ej. el 9X a esa RPM), el notch la elimina en *esa* velocidad;
 > normalmente reaparece en las demás velocidades (la natural no se mueve con la
 > RPM, el armónico sí), así que la banda horizontal sigue viéndose en el scatter.
+
+## Inspección de una condición (`inspeccionar_espectro.py`)
+
+Para revisar en detalle **una sola** medición: eliges `rep/iso/dsb/rpm/sensor` y
+genera una figura de 3 paneles con el mismo pipeline que `deteccion_picos.py`:
+
+1. **Espectro original**, con las bandas síncronas (1X…NX) sombreadas y el 1X
+   estimado marcado.
+2. **Espectro tras eliminar** el 1X y sus armónicos (notch + interpolación).
+3. **Picos detectados** sobre el espectro limpio + las **métricas**: umbral de
+   prominencia (`máx·fracción`), distancia mínima, 1X, nº de armónicos, `df`, y
+   la prominencia real de cada pico dibujada como barra vertical.
+
+```bash
+python inspeccionar_espectro.py --entrada resultados_fft.txt \
+    --rep 1 --iso 46 --dsb 1 --rpm 600 --sensor P1.Y
+```
+
+Acepta los mismos parámetros de detección (`--fraccion`, `--n-armonicos`,
+`--ancho-bins`, …), así que sirve para **calibrar** esos valores viendo el efecto
+antes de lanzar `deteccion_picos.py` sobre toda la base. Si la combinación no
+existe, lista las disponibles.
 
 ## Formato de salida (`.txt`)
 

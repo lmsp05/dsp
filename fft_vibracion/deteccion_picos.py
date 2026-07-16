@@ -151,13 +151,18 @@ def _mascara_sincrona(f: np.ndarray, f1: float | None, n_max: int,
     return mask
 
 
-def detectar_picos(frecuencia: np.ndarray, amplitud: np.ndarray,
-                   fraccion: float, dist_bins: int,
-                   fmin: float | None, fmax: float | None,
-                   rpm: float | None = None, quitar_armonicos: bool = True,
-                   n_armonicos: int = N_ARMONICOS, tol_orden: float = TOL_ORDEN,
-                   band_1x: float = BAND_1X, ancho_bins: float = ANCHO_BINS_NOTCH) -> np.ndarray:
-    """Devuelve las frecuencias de los picos (sin sincronos), ordenadas asc."""
+def analizar_espectro(frecuencia: np.ndarray, amplitud: np.ndarray,
+                      fraccion: float, dist_bins: int,
+                      fmin: float | None, fmax: float | None,
+                      rpm: float | None = None, quitar_armonicos: bool = True,
+                      n_armonicos: int = N_ARMONICOS, tol_orden: float = TOL_ORDEN,
+                      band_1x: float = BAND_1X, ancho_bins: float = ANCHO_BINS_NOTCH) -> dict:
+    """Ejecuta el pipeline completo sobre UN espectro y devuelve todos los pasos.
+
+    Devuelve un dict con: f, a (espectro original tras fmin/fmax), a_det (espectro
+    sin sincronos), sinc (mascara de bandas sincronas), f1 (giro estimado),
+    prominencia (umbral), dist_bins, picos_idx, picos_freq, picos_amp.
+    """
     orden = np.argsort(frecuencia)
     f = np.asarray(frecuencia)[orden]
     a = np.asarray(amplitud)[orden]
@@ -170,12 +175,18 @@ def detectar_picos(frecuencia: np.ndarray, amplitud: np.ndarray,
             m &= f <= fmax
         f, a = f[m], a[m]
 
+    vacio = {"f": f, "a": a, "a_det": a.copy(),
+             "sinc": np.zeros(len(f), dtype=bool), "f1": None,
+             "prominencia": 0.0, "dist_bins": dist_bins,
+             "picos_idx": np.array([], dtype=int),
+             "picos_freq": np.array([]), "picos_amp": np.array([])}
     if a.size == 0 or a.max() <= 0:
-        return np.array([])
+        return vacio
 
     # --- Elimina el 1X y sus armonicos del espectro (notch por interpolacion) ---
     sinc = np.zeros(len(f), dtype=bool)
     a_det = a.copy()
+    f1 = None
     if quitar_armonicos:
         f1 = _f1_giro(f, a, rpm, band_1x)
         sinc = _mascara_sincrona(f, f1, n_armonicos, tol_orden, ancho_bins)
@@ -186,8 +197,22 @@ def detectar_picos(frecuencia: np.ndarray, amplitud: np.ndarray,
     prominencia = a_det.max() * fraccion
     picos, _ = find_peaks(a_det, prominence=prominencia, distance=max(1, dist_bins))
     # descarta cualquier pico residual que caiga en una banda sincrona
-    picos = [p for p in picos if not sinc[p]]
-    return f[picos]
+    picos = np.array([p for p in picos if not sinc[p]], dtype=int)
+    return {"f": f, "a": a, "a_det": a_det, "sinc": sinc, "f1": f1,
+            "prominencia": prominencia, "dist_bins": dist_bins,
+            "picos_idx": picos, "picos_freq": f[picos], "picos_amp": a_det[picos]}
+
+
+def detectar_picos(frecuencia: np.ndarray, amplitud: np.ndarray,
+                   fraccion: float, dist_bins: int,
+                   fmin: float | None, fmax: float | None,
+                   rpm: float | None = None, quitar_armonicos: bool = True,
+                   n_armonicos: int = N_ARMONICOS, tol_orden: float = TOL_ORDEN,
+                   band_1x: float = BAND_1X, ancho_bins: float = ANCHO_BINS_NOTCH) -> np.ndarray:
+    """Devuelve las frecuencias de los picos (sin sincronos), ordenadas asc."""
+    return analizar_espectro(
+        frecuencia, amplitud, fraccion, dist_bins, fmin, fmax, rpm,
+        quitar_armonicos, n_armonicos, tol_orden, band_1x, ancho_bins)["picos_freq"]
 
 
 # ============================================================
