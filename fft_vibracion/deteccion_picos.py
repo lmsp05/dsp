@@ -24,8 +24,30 @@ Es decir: `scipy.signal.find_peaks` sobre la AMPLITUD LINEAL del espectro, con
 (El .m convierte la cascada de dB a lineal antes de detectar; nuestra amplitud
 ya esta en unidades lineales, asi que se usa directamente.)
 
+--------------------------------------------------------------------------
+ELIMINACION DE SINCRONOS Y ARMONICOS (1X, 2X, ... NX)
+--------------------------------------------------------------------------
+Antes de detectar los picos se quitan del espectro las lineas SINCRONAS (el 1X
+de giro) y sus ARMONICOS (2X, 3X, ...), para que la deteccion quede solo con el
+contenido no sincrono (frecuencias naturales, whirl de aceite, etc.). El
+procedimiento:
+
+  1. Se estima la frecuencia de giro real f1: se parte de rpm/60 y se refina
+     tomando la frecuencia de mayor amplitud en una banda +-`band_1x` alrededor
+     (el 1X real puede no caer exacto en rpm/60 nominal).
+  2. Se marcan como sincronas las lineas cuyo ORDEN (freq/f1) este a menos de
+     `tol_orden` de un entero n = 1..`n_armonicos`.
+  3. En esas bandas se sustituye la amplitud por la linea base interpolada del
+     entorno no sincrono (notch), de modo que el pico sincrono desaparece sin
+     dejar un hueco artificial.
+
+Ventaja adicional: como la prominencia es relativa al maximo del espectro, al
+quitar el 1X (que suele dominar con desbalance) el umbral baja y afloran picos
+naturales debiles que antes quedaban por debajo.
+
 Para cada espectro (una combinacion rep/iso/dsb/rpm/sensor) se detectan los
-picos, se ordenan por frecuencia ascendente y se guardan como omega1, omega2, ...
+picos ya sin sincronos, se ordenan por frecuencia ascendente y se guardan como
+omega1, omega2, ...
 
 --------------------------------------------------------------------------
 SALIDAS (en la misma carpeta que la entrada, o la indicada con --outdir)
@@ -59,6 +81,12 @@ from scipy.signal import find_peaks
 FRACCION_PROMINENCIA = 0.1   # MinPeakProminence = max(espectro) * fraccion
 DIST_BINS = 5                # MinPeakDistance en numero de bins
 
+# Eliminacion de sincronos/armonicos
+N_ARMONICOS = 10             # ordenes a eliminar: 1X ... NX
+TOL_ORDEN = 0.05             # una linea es sincrona si |freq/f1 - entero| <= tol
+BAND_1X = 0.10               # banda relativa para refinar el 1X real cerca de rpm/60
+ANCHO_BINS_NOTCH = 2.5       # medio ancho del notch en bins (cubre el lobulo del pico)
+
 # Codificacion visual del diagrama de dispersion
 COLORES_ISO = {32: "#1f77b4", 46: "#ff7f0e", 68: "#2ca02c"}
 FORMAS_DSB = {1: "o", 2: "s", 3: "^"}
@@ -90,10 +118,46 @@ def cargar_espectros(path: Path) -> np.ndarray:
 # DETECCION DE PICOS POR ESPECTRO (procedimiento del .m)
 # ============================================================
 
+def _f1_giro(f: np.ndarray, a: np.ndarray, rpm: float, band: float) -> float | None:
+    """Frecuencia de giro real (1X): rpm/60 refinado al maximo local cercano."""
+    if not rpm or rpm <= 0:
+        return None
+    f1 = rpm / 60.0
+    m = (f >= f1 * (1 - band)) & (f <= f1 * (1 + band))
+    if m.any():
+        f1 = float(f[m][np.argmax(a[m])])
+    return f1
+
+
+def _mascara_sincrona(f: np.ndarray, f1: float | None, n_max: int,
+                      tol_orden: float, ancho_bins: float) -> np.ndarray:
+    """Marca las lineas que caen en el 1X y sus armonicos (1..n_max).
+
+    El ancho del notch alrededor de cada orden n*f1 es el MAYOR entre:
+      * tol_orden * f1  (tolerancia en orden), y
+      * ancho_bins * df (varios bins, para cubrir el lobulo del pico y sus
+        hombros y no dejar residuos que luego se detecten como picos falsos).
+    """
+    if not f1 or f1 <= 0:
+        return np.zeros(len(f), dtype=bool)
+    df = float(np.median(np.diff(f))) if len(f) > 1 else 0.0
+    half = max(tol_orden * f1, ancho_bins * df)
+    mask = np.zeros(len(f), dtype=bool)
+    for n in range(1, n_max + 1):
+        centro = n * f1
+        if centro - half > f[-1]:
+            break
+        mask |= np.abs(f - centro) <= half
+    return mask
+
+
 def detectar_picos(frecuencia: np.ndarray, amplitud: np.ndarray,
                    fraccion: float, dist_bins: int,
-                   fmin: float | None, fmax: float | None) -> np.ndarray:
-    """Devuelve las frecuencias de los picos, ordenadas ascendentemente."""
+                   fmin: float | None, fmax: float | None,
+                   rpm: float | None = None, quitar_armonicos: bool = True,
+                   n_armonicos: int = N_ARMONICOS, tol_orden: float = TOL_ORDEN,
+                   band_1x: float = BAND_1X, ancho_bins: float = ANCHO_BINS_NOTCH) -> np.ndarray:
+    """Devuelve las frecuencias de los picos (sin sincronos), ordenadas asc."""
     orden = np.argsort(frecuencia)
     f = np.asarray(frecuencia)[orden]
     a = np.asarray(amplitud)[orden]
@@ -109,8 +173,20 @@ def detectar_picos(frecuencia: np.ndarray, amplitud: np.ndarray,
     if a.size == 0 or a.max() <= 0:
         return np.array([])
 
-    prominencia = a.max() * fraccion
-    picos, _ = find_peaks(a, prominence=prominencia, distance=max(1, dist_bins))
+    # --- Elimina el 1X y sus armonicos del espectro (notch por interpolacion) ---
+    sinc = np.zeros(len(f), dtype=bool)
+    a_det = a.copy()
+    if quitar_armonicos:
+        f1 = _f1_giro(f, a, rpm, band_1x)
+        sinc = _mascara_sincrona(f, f1, n_armonicos, tol_orden, ancho_bins)
+        if sinc.any() and (~sinc).any():
+            a_det[sinc] = np.interp(f[sinc], f[~sinc], a[~sinc])
+
+    # --- Deteccion de picos sobre el espectro ya sin sincronos ---
+    prominencia = a_det.max() * fraccion
+    picos, _ = find_peaks(a_det, prominence=prominencia, distance=max(1, dist_bins))
+    # descarta cualquier pico residual que caiga en una banda sincrona
+    picos = [p for p in picos if not sinc[p]]
     return f[picos]
 
 
@@ -126,18 +202,24 @@ def procesar(arr: np.ndarray, args) -> list[dict]:
     sensor = np.asarray(arr["sensor"]).astype(str)
     freq = arr["frecuencia_Hz"].astype(float)
     amp = arr["amplitud"].astype(float)
+    # RPM real medida (para estimar el 1X); si no esta, se usa la nominal.
+    tiene_medida = "rpm_medida" in arr.dtype.names
+    rpm_medida = arr["rpm_medida"].astype(float) if tiene_medida else rpm
 
     claves = list(zip(rep, iso, dsb, rpm, sensor))
     vistos: dict[tuple, None] = {}
     for c in claves:
         vistos.setdefault(c, None)
 
-    claves_arr = np.array(claves, dtype=object)
     filas = []
     for clave in vistos:
         m = np.array([c == clave for c in claves], dtype=bool)
+        rpm_f1 = float(np.median(rpm_medida[m])) if tiene_medida else clave[3]
         omegas = detectar_picos(
-            freq[m], amp[m], args.fraccion, args.dist_bins, args.fmin, args.fmax)
+            freq[m], amp[m], args.fraccion, args.dist_bins, args.fmin, args.fmax,
+            rpm=rpm_f1, quitar_armonicos=not args.conservar_armonicos,
+            n_armonicos=args.n_armonicos, tol_orden=args.tol_orden,
+            band_1x=args.band_1x, ancho_bins=args.ancho_bins)
         r, i_, d, v, s = clave
         filas.append({
             "rep": int(r), "iso": int(i_), "dsb": int(d), "rpm": float(v),
@@ -282,6 +364,17 @@ def construir_parser() -> argparse.ArgumentParser:
                    help="Distancia minima entre picos, en bins (def: 5)")
     p.add_argument("--fmin", type=float, default=None, help="Frecuencia minima a considerar [Hz]")
     p.add_argument("--fmax", type=float, default=None, help="Frecuencia maxima a considerar [Hz]")
+    # Eliminacion de sincronos/armonicos
+    p.add_argument("--conservar-armonicos", dest="conservar_armonicos", action="store_true",
+                   help="NO eliminar el 1X ni sus armonicos (por defecto SI se eliminan)")
+    p.add_argument("--n-armonicos", dest="n_armonicos", type=int, default=N_ARMONICOS,
+                   help="Numero de ordenes a eliminar: 1X..NX (def: 10)")
+    p.add_argument("--tol-orden", dest="tol_orden", type=float, default=TOL_ORDEN,
+                   help="Tolerancia de orden para marcar una linea como sincrona (def: 0.05)")
+    p.add_argument("--band-1x", dest="band_1x", type=float, default=BAND_1X,
+                   help="Banda relativa para refinar el 1X cerca de rpm/60 (def: 0.10)")
+    p.add_argument("--ancho-bins", dest="ancho_bins", type=float, default=ANCHO_BINS_NOTCH,
+                   help="Medio ancho del notch de cada armonico, en bins (def: 4)")
     return p
 
 

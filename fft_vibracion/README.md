@@ -110,10 +110,30 @@ que aquí es `scipy.signal.find_peaks` sobre la amplitud lineal con
 `prominence = max(amplitud) * fraccion` (0.1 por defecto) y `distance = 5` bins.
 Los picos se ordenan por frecuencia ascendente → `omega1, omega2, …`.
 
+**Eliminación de síncronos y armónicos (1X, 2X, … NX):** antes de detectar, se
+quitan del espectro las líneas de giro y sus armónicos, para que los `omega`
+sean solo contenido no síncrono (frecuencias naturales). El procedimiento:
+
+1. Se estima el **1X real**: se parte de `rpm/60` (usando la RPM *medida* del
+   `.txt` si está) y se refina al máximo local en una banda `±band_1x`.
+2. Se marcan como síncronas las líneas cuyo **orden** (`freq/f1`) esté cerca de
+   un entero `n = 1…n_armonicos`; el ancho del notch alrededor de cada `n·f1`
+   cubre el lóbulo del pico (`ancho_bins` bins) para no dejar hombros residuales.
+3. En esas bandas la amplitud se sustituye por la **línea base interpolada** del
+   entorno no síncrono.
+
+Como la prominencia es relativa al máximo, al quitar el 1X (que domina con
+desbalance) el umbral baja y **afloran picos naturales débiles** que antes se
+perdían. Se puede desactivar con `--conservar-armonicos`.
+
 ```bash
 python deteccion_picos.py --entrada resultados_fft.txt --outdir .
 # parámetros del criterio (por defecto los del .m)
 python deteccion_picos.py --entrada resultados_fft.npy --fraccion 0.1 --dist-bins 5 --fmax 300
+# ajustar la eliminación de armónicos
+python deteccion_picos.py --entrada resultados_fft.txt --n-armonicos 12 --ancho-bins 3
+# no eliminar armónicos (comportamiento anterior)
+python deteccion_picos.py --entrada resultados_fft.txt --conservar-armonicos
 ```
 
 Genera, en la carpeta de salida:
@@ -127,9 +147,14 @@ Genera, en la carpeta de salida:
 * **`picos_scatter_<sensor>.png`** — la misma dispersión, un archivo por sensor.
 
 > Nota: como en el `.m`, la prominencia es **relativa al máximo de cada
-> espectro**. Si el 1X domina mucho (p. ej. con desbalance alto), los picos más
-> débiles pueden quedar por debajo del umbral y no detectarse; baja `--fraccion`
-> si quieres capturarlos.
+> espectro**. Con la eliminación de armónicos activada (por defecto) el 1X ya no
+> domina el máximo, así que los picos débiles se detectan mejor; aun así puedes
+> bajar `--fraccion` para capturar más.
+>
+> Advertencia: si una frecuencia natural coincide en una velocidad concreta con
+> un armónico (p. ej. el 9X a esa RPM), el notch la elimina en *esa* velocidad;
+> normalmente reaparece en las demás velocidades (la natural no se mueve con la
+> RPM, el armónico sí), así que la banda horizontal sigue viéndose en el scatter.
 
 ## Formato de salida (`.txt`)
 
