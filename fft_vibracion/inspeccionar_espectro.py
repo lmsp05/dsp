@@ -7,9 +7,11 @@ Inspeccion visual del proceso de deteccion de picos para UNA condicion elegida.
 Se selecciona repeticion, viscosidad ISO, desbalance, RPM nominal y sensor, y el
 script genera una figura de 3 paneles:
 
-  1. Espectro ORIGINAL (amplitud vs frecuencia), con las bandas sincronas
-     (1X, 2X, ... NX) sombreadas para ver que se va a eliminar y el 1X estimado.
-  2. Espectro DESPUES de eliminar el 1X y sus armonicos (notch + interpolacion).
+  1. Espectro ORIGINAL (amplitud vs frecuencia). Se marca cada pico SINCRONO
+     detectado (punta dentro del margen de un orden entero) y sus HOMBROS (primer
+     minimo local a cada lado): el intervalo entre hombros es lo que se elimina.
+  2. Espectro DESPUES de eliminar el 1X y sus armonicos por el metodo de hombros
+     (recorte del pico completo entre sus hombros + interpolacion de la base).
   3. Espectro limpio con los PICOS DETECTADOS marcados y las METRICAS de
      deteccion: prominencia minima (umbral), distancia minima, y la prominencia
      real de cada pico dibujada como una barra vertical.
@@ -71,6 +73,7 @@ def graficar(det, info, salida: Path):
     f, a, a_det, sinc = det["f"], det["a"], det["a_det"], det["sinc"]
     f1, prom, dist = det["f1"], det["prominencia"], det["dist_bins"]
     pidx, pf, pa = det["picos_idx"], det["picos_freq"], det["picos_amp"]
+    intervalos = det.get("sinc_intervalos", [])
 
     df = float(np.median(np.diff(f))) if len(f) > 1 else 0.0
     ymax = float(a.max()) * 1.1
@@ -102,11 +105,19 @@ def graficar(det, info, salida: Path):
         for n in range(1, 100):
             if n * f1 > f[-1]:
                 break
-            ax1.axvline(n * f1, color="purple", ls=":", lw=0.8, alpha=0.6)
+            ax1.axvline(n * f1, color="purple", ls=":", lw=0.8, alpha=0.5)
         ax1.axvline(f1, color="purple", ls="--", lw=1.2, label=f"1X ≈ {f1:.2f} Hz")
-        ax1.legend(loc="upper right", fontsize=8)
+    # puntas sincronas detectadas y sus hombros (lo que define el intervalo a quitar)
+    if intervalos:
+        pf_s = [f[p] for (_, p, _, _) in intervalos]
+        pa_s = [a[p] for (_, p, _, _) in intervalos]
+        hx = [f[l] for (l, _, _, _) in intervalos] + [f[r] for (_, _, r, _) in intervalos]
+        hy = [a[l] for (l, _, _, _) in intervalos] + [a[r] for (_, _, r, _) in intervalos]
+        ax1.plot(pf_s, pa_s, "v", color="purple", ms=7, label="punta síncrona")
+        ax1.plot(hx, hy, "|", color="black", ms=10, mew=1.5, label="hombros")
+    ax1.legend(loc="upper right", fontsize=8)
     ax1.set_ylabel("Amplitud")
-    ax1.set_title("1) Espectro original  (bandas rojas = síncronas que se eliminarán)")
+    ax1.set_title("1) Espectro original  (▽ punta síncrona · | hombros · banda roja = intervalo eliminado)")
     ax1.set_ylim(0, ymax)
     ax1.grid(True, alpha=0.3)
 
@@ -114,7 +125,7 @@ def graficar(det, info, salida: Path):
     ax2.plot(f, a_det, color="seagreen", lw=1.0)
     sombrear(ax2)
     ax2.set_ylabel("Amplitud")
-    ax2.set_title("2) Espectro tras eliminar 1X y armónicos (notch + interpolación)")
+    ax2.set_title("2) Espectro tras eliminar 1X y armónicos (recorte por hombros + interpolación)")
     ax2.set_ylim(0, ymax)
     ax2.grid(True, alpha=0.3)
 

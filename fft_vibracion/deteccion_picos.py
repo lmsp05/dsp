@@ -151,17 +151,24 @@ def _hombros(a: np.ndarray, p: int) -> tuple[int, int]:
 
 
 def _mascara_sincrona(f: np.ndarray, a: np.ndarray, f1: float | None, n_max: int,
-                      tol_orden: float, ancho_bins: float) -> np.ndarray:
+                      tol_orden: float, ancho_bins: float):
     """Marca para eliminacion los picos SINCRONOS por el metodo de hombros.
 
     Un maximo local es sincrono si su punta cae dentro del margen de un orden
     entero (|freq/f1 - n| <= tol_orden, n = 1..n_max). Para cada uno se detectan
     sus hombros y se marca TODO el intervalo del pico. `ancho_bins` impone un piso
     minimo de medio ancho (en bins) por si la punta es plana o ruidosa.
+
+    Devuelve (mask, intervalos, picos) donde:
+      * mask       : bool array de las lineas a eliminar,
+      * intervalos : lista de (idx_hombro_izq, idx_punta, idx_hombro_der, orden_n),
+      * picos      : indices de las puntas sincronas.
     """
     mask = np.zeros(len(f), dtype=bool)
+    intervalos: list[tuple[int, int, int, int]] = []
+    picos_sinc: list[int] = []
     if not f1 or f1 <= 0 or len(f) < 3:
-        return mask
+        return mask, intervalos, picos_sinc
     piso = int(max(0, round(ancho_bins)))
     picos, _ = find_peaks(a)
     for p in picos:
@@ -172,7 +179,9 @@ def _mascara_sincrona(f: np.ndarray, a: np.ndarray, f1: float | None, n_max: int
             l = max(0, min(l, p - piso))
             r = min(len(f) - 1, max(r, p + piso))
             mask[l:r + 1] = True
-    return mask
+            intervalos.append((l, int(p), r, n))
+            picos_sinc.append(int(p))
+    return mask, intervalos, picos_sinc
 
 
 def analizar_espectro(frecuencia: np.ndarray, amplitud: np.ndarray,
@@ -200,20 +209,24 @@ def analizar_espectro(frecuencia: np.ndarray, amplitud: np.ndarray,
         f, a = f[m], a[m]
 
     vacio = {"f": f, "a": a, "a_det": a.copy(),
-             "sinc": np.zeros(len(f), dtype=bool), "f1": None,
+             "sinc": np.zeros(len(f), dtype=bool), "sinc_intervalos": [],
+             "sinc_picos": [], "f1": None,
              "prominencia": 0.0, "dist_bins": dist_bins,
              "picos_idx": np.array([], dtype=int),
              "picos_freq": np.array([]), "picos_amp": np.array([])}
     if a.size == 0 or a.max() <= 0:
         return vacio
 
-    # --- Elimina el 1X y sus armonicos del espectro (notch por interpolacion) ---
+    # --- Elimina el 1X y sus armonicos por el metodo de hombros (interpolacion) ---
     sinc = np.zeros(len(f), dtype=bool)
+    intervalos: list = []
+    picos_sinc: list = []
     a_det = a.copy()
     f1 = None
     if quitar_armonicos:
         f1 = _f1_giro(f, a, rpm, band_1x)
-        sinc = _mascara_sincrona(f, a, f1, n_armonicos, tol_orden, ancho_bins)
+        sinc, intervalos, picos_sinc = _mascara_sincrona(
+            f, a, f1, n_armonicos, tol_orden, ancho_bins)
         if sinc.any() and (~sinc).any():
             a_det[sinc] = np.interp(f[sinc], f[~sinc], a[~sinc])
 
@@ -222,7 +235,8 @@ def analizar_espectro(frecuencia: np.ndarray, amplitud: np.ndarray,
     picos, _ = find_peaks(a_det, prominence=prominencia, distance=max(1, dist_bins))
     # descarta cualquier pico residual que caiga en una banda sincrona
     picos = np.array([p for p in picos if not sinc[p]], dtype=int)
-    return {"f": f, "a": a, "a_det": a_det, "sinc": sinc, "f1": f1,
+    return {"f": f, "a": a, "a_det": a_det, "sinc": sinc,
+            "sinc_intervalos": intervalos, "sinc_picos": picos_sinc, "f1": f1,
             "prominencia": prominencia, "dist_bins": dist_bins,
             "picos_idx": picos, "picos_freq": f[picos], "picos_amp": a_det[picos]}
 
