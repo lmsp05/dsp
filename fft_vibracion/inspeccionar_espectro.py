@@ -160,7 +160,7 @@ def graficar(det, info, salida: Path):
         f"distancia mínima = {dist} bins ({dist_hz:.2f} Hz)\n"
         + linea_f1 +
         f"nº armónicos quitados = {info['n_armonicos']}\n"
-        f"ancho notch = {info['ancho_bins']:g} bins\n"
+        f"piso notch (hombros) = {info['ancho_bins']:g} bins\n"
         f"df = {df:.3f} Hz\n"
         f"nº picos detectados = {len(pf)}"
     )

@@ -111,17 +111,24 @@ que aquí es `scipy.signal.find_peaks` sobre la amplitud lineal con
 `prominence = max(amplitud) * fraccion` (0.1 por defecto) y `distance = 5` bins.
 Los picos se ordenan por frecuencia ascendente → `omega1, omega2, …`.
 
-**Eliminación de síncronos y armónicos (1X, 2X, … NX):** antes de detectar, se
-quitan del espectro las líneas de giro y sus armónicos, para que los `omega`
-sean solo contenido no síncrono (frecuencias naturales). El procedimiento:
+**Eliminación de síncronos y armónicos (1X, 2X, … NX) — método por hombros:**
+antes de detectar, se quitan del espectro las líneas de giro y sus armónicos,
+para que los `omega` sean solo contenido no síncrono (frecuencias naturales):
 
 1. Se estima el **1X real**: se parte de `rpm/60` (usando la RPM *medida* del
    `.txt` si está) y se refina al máximo local en una banda `±band_1x`.
-2. Se marcan como síncronas las líneas cuyo **orden** (`freq/f1`) esté cerca de
-   un entero `n = 1…n_armonicos`; el ancho del notch alrededor de cada `n·f1`
-   cubre el lóbulo del pico (`ancho_bins` bins) para no dejar hombros residuales.
-3. En esas bandas la amplitud se sustituye por la **línea base interpolada** del
-   entorno no síncrono.
+2. Se buscan los **máximos locales** del espectro. Un pico es síncrono si su
+   **punta** cae dentro del margen de un orden entero: `|freq/f1 - n| ≤ tol_orden`
+   con `n = 1…n_armonicos`.
+3. Para cada pico síncrono se detectan sus **hombros** (se desciende a cada lado
+   hasta el primer mínimo local) y se elimina el pico **completo** en ese
+   intervalo, sustituyéndolo por la **línea base interpolada**. `ancho_bins` es
+   solo un piso mínimo de medio ancho por si la punta es plana o ruidosa.
+
+Ventaja frente al notch de ancho fijo: el ancho lo define el **propio pico**, así
+que solo se recorta donde de verdad hay contenido síncrono. Una frecuencia
+natural cercana a un orden pero separada por un valle **no** se elimina (no es el
+pico cuya punta cae en el margen y queda fuera de sus hombros).
 
 Como la prominencia es relativa al máximo, al quitar el 1X (que domina con
 desbalance) el umbral baja y **afloran picos naturales débiles** que antes se
@@ -152,10 +159,12 @@ Genera, en la carpeta de salida:
 > domina el máximo, así que los picos débiles se detectan mejor; aun así puedes
 > bajar `--fraccion` para capturar más.
 >
-> Advertencia: si una frecuencia natural coincide en una velocidad concreta con
-> un armónico (p. ej. el 9X a esa RPM), el notch la elimina en *esa* velocidad;
-> normalmente reaparece en las demás velocidades (la natural no se mueve con la
-> RPM, el armónico sí), así que la banda horizontal sigue viéndose en el scatter.
+> Con el método por hombros, una natural solo se elimina si es *ella misma* el
+> pico cuya punta cae dentro del margen de un orden (mismo bin que el armónico a
+> esa RPM). Si está separada del armónico por un valle, se conserva. Aun así,
+> cuando natural y armónico se solapan de verdad a una velocidad, la natural
+> reaparece en las demás (no se mueve con la RPM), así que la banda horizontal
+> sigue viéndose en el scatter.
 
 ## Inspección de una condición (`inspeccionar_espectro.py`)
 

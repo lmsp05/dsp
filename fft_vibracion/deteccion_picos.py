@@ -25,21 +25,29 @@ Es decir: `scipy.signal.find_peaks` sobre la AMPLITUD LINEAL del espectro, con
 ya esta en unidades lineales, asi que se usa directamente.)
 
 --------------------------------------------------------------------------
-ELIMINACION DE SINCRONOS Y ARMONICOS (1X, 2X, ... NX)
+ELIMINACION DE SINCRONOS Y ARMONICOS (1X, 2X, ... NX)  [metodo por hombros]
 --------------------------------------------------------------------------
 Antes de detectar los picos se quitan del espectro las lineas SINCRONAS (el 1X
 de giro) y sus ARMONICOS (2X, 3X, ...), para que la deteccion quede solo con el
 contenido no sincrono (frecuencias naturales, whirl de aceite, etc.). El
-procedimiento:
+procedimiento (eliminacion adaptativa por hombros):
 
   1. Se estima la frecuencia de giro real f1: se parte de rpm/60 y se refina
      tomando la frecuencia de mayor amplitud en una banda +-`band_1x` alrededor
      (el 1X real puede no caer exacto en rpm/60 nominal).
-  2. Se marcan como sincronas las lineas cuyo ORDEN (freq/f1) este a menos de
-     `tol_orden` de un entero n = 1..`n_armonicos`.
-  3. En esas bandas se sustituye la amplitud por la linea base interpolada del
-     entorno no sincrono (notch), de modo que el pico sincrono desaparece sin
-     dejar un hueco artificial.
+  2. Se buscan los MAXIMOS LOCALES del espectro. Un pico es sincrono si su PUNTA
+     (su frecuencia) cae dentro del margen de un orden entero: |freq/f1 - n| <=
+     `tol_orden`, con n = 1..`n_armonicos`.
+  3. Para cada pico sincrono se detectan sus HOMBROS: se desciende a izquierda y
+     derecha hasta el primer minimo local. Se elimina el pico COMPLETO en ese
+     intervalo [hombro_izq, hombro_der], sustituyendo la amplitud por la linea
+     base interpolada del entorno no sincrono. (`ancho_bins` fija un piso minimo
+     de medio ancho por si la punta es plana o ruidosa.)
+
+Ventaja frente al notch de ancho fijo: el ancho lo define el propio pico, asi que
+solo se elimina donde REALMENTE hay contenido sincrono. Una frecuencia natural
+cercana a un orden (pero separada por un valle) NO se elimina, porque no es el
+pico cuya punta cae en el margen y queda fuera de sus hombros.
 
 Ventaja adicional: como la prominencia es relativa al maximo del espectro, al
 quitar el 1X (que suele dominar con desbalance) el umbral baja y afloran picos
@@ -83,9 +91,9 @@ DIST_BINS = 5                # MinPeakDistance en numero de bins
 
 # Eliminacion de sincronos/armonicos
 N_ARMONICOS = 10             # ordenes a eliminar: 1X ... NX
-TOL_ORDEN = 0.05             # una linea es sincrona si |freq/f1 - entero| <= tol
+TOL_ORDEN = 0.05             # un pico es sincrono si |punta/f1 - entero| <= tol
 BAND_1X = 0.10               # banda relativa para refinar el 1X real cerca de rpm/60
-ANCHO_BINS_NOTCH = 2.5       # medio ancho del notch en bins (cubre el lobulo del pico)
+ANCHO_BINS_NOTCH = 1.0       # piso minimo de medio ancho, en bins (por punta plana)
 
 # Codificacion visual del diagrama de dispersion
 COLORES_ISO = {32: "#1f77b4", 46: "#ff7f0e", 68: "#2ca02c"}
@@ -129,25 +137,41 @@ def _f1_giro(f: np.ndarray, a: np.ndarray, rpm: float, band: float) -> float | N
     return f1
 
 
-def _mascara_sincrona(f: np.ndarray, f1: float | None, n_max: int,
-                      tol_orden: float, ancho_bins: float) -> np.ndarray:
-    """Marca las lineas que caen en el 1X y sus armonicos (1..n_max).
+def _hombros(a: np.ndarray, p: int) -> tuple[int, int]:
+    """Extremos del pico en el indice p: se desciende a cada lado mientras la
+    amplitud no vuelva a subir, hasta el primer minimo local (el hombro)."""
+    n = len(a)
+    l = p
+    while l - 1 >= 0 and a[l - 1] <= a[l]:
+        l -= 1
+    r = p
+    while r + 1 < n and a[r + 1] <= a[r]:
+        r += 1
+    return l, r
 
-    El ancho del notch alrededor de cada orden n*f1 es el MAYOR entre:
-      * tol_orden * f1  (tolerancia en orden), y
-      * ancho_bins * df (varios bins, para cubrir el lobulo del pico y sus
-        hombros y no dejar residuos que luego se detecten como picos falsos).
+
+def _mascara_sincrona(f: np.ndarray, a: np.ndarray, f1: float | None, n_max: int,
+                      tol_orden: float, ancho_bins: float) -> np.ndarray:
+    """Marca para eliminacion los picos SINCRONOS por el metodo de hombros.
+
+    Un maximo local es sincrono si su punta cae dentro del margen de un orden
+    entero (|freq/f1 - n| <= tol_orden, n = 1..n_max). Para cada uno se detectan
+    sus hombros y se marca TODO el intervalo del pico. `ancho_bins` impone un piso
+    minimo de medio ancho (en bins) por si la punta es plana o ruidosa.
     """
-    if not f1 or f1 <= 0:
-        return np.zeros(len(f), dtype=bool)
-    df = float(np.median(np.diff(f))) if len(f) > 1 else 0.0
-    half = max(tol_orden * f1, ancho_bins * df)
     mask = np.zeros(len(f), dtype=bool)
-    for n in range(1, n_max + 1):
-        centro = n * f1
-        if centro - half > f[-1]:
-            break
-        mask |= np.abs(f - centro) <= half
+    if not f1 or f1 <= 0 or len(f) < 3:
+        return mask
+    piso = int(max(0, round(ancho_bins)))
+    picos, _ = find_peaks(a)
+    for p in picos:
+        orden = f[p] / f1
+        n = int(round(orden))
+        if 1 <= n <= n_max and abs(orden - n) <= tol_orden:
+            l, r = _hombros(a, p)
+            l = max(0, min(l, p - piso))
+            r = min(len(f) - 1, max(r, p + piso))
+            mask[l:r + 1] = True
     return mask
 
 
@@ -189,7 +213,7 @@ def analizar_espectro(frecuencia: np.ndarray, amplitud: np.ndarray,
     f1 = None
     if quitar_armonicos:
         f1 = _f1_giro(f, a, rpm, band_1x)
-        sinc = _mascara_sincrona(f, f1, n_armonicos, tol_orden, ancho_bins)
+        sinc = _mascara_sincrona(f, a, f1, n_armonicos, tol_orden, ancho_bins)
         if sinc.any() and (~sinc).any():
             a_det[sinc] = np.interp(f[sinc], f[~sinc], a[~sinc])
 
@@ -395,11 +419,11 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("--n-armonicos", dest="n_armonicos", type=int, default=N_ARMONICOS,
                    help="Numero de ordenes a eliminar: 1X..NX (def: 10)")
     p.add_argument("--tol-orden", dest="tol_orden", type=float, default=TOL_ORDEN,
-                   help="Tolerancia de orden para marcar una linea como sincrona (def: 0.05)")
+                   help="Margen de orden para que la punta de un pico sea sincrona (def: 0.05)")
     p.add_argument("--band-1x", dest="band_1x", type=float, default=BAND_1X,
                    help="Banda relativa para refinar el 1X cerca de rpm/60 (def: 0.10)")
     p.add_argument("--ancho-bins", dest="ancho_bins", type=float, default=ANCHO_BINS_NOTCH,
-                   help="Medio ancho del notch de cada armonico, en bins (def: 4)")
+                   help="Piso minimo de medio ancho del recorte, en bins (def: 1)")
     return p
 
 
