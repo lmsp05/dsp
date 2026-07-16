@@ -2,10 +2,12 @@
 inspeccionar_espectro.py
 ========================
 
-Inspeccion visual del proceso de deteccion de picos para UNA condicion elegida.
+Inspeccion visual del proceso de deteccion de picos.
 
-Se selecciona repeticion, viscosidad ISO, desbalance, RPM nominal y sensor, y el
-script genera una figura de 3 paneles:
+Se filtran las condiciones por NIVELES de cada propiedad (repeticion, viscosidad
+ISO, desbalance, RPM nominal y sensor), indicados como listas separadas por comas
+(p. ej. --rep 1,3 --iso 32,68); una propiedad sin niveles admite cualquier valor.
+Se genera UNA figura por cada combinacion que pasa el filtro, con 3 paneles:
 
   1. Espectro ORIGINAL (amplitud vs frecuencia). Se marca cada pico SINCRONO
      detectado (punta dentro del margen de un orden entero) y sus HOMBROS (primer
@@ -20,10 +22,14 @@ Reutiliza exactamente el mismo pipeline que ``deteccion_picos.py`` (funcion
 ``analizar_espectro``), asi que lo que se ve es lo que ese script realmente hace.
 
 Uso:
+    # una sola condicion
     python inspeccionar_espectro.py --entrada resultados_fft.txt \
         --rep 1 --iso 46 --dsb 1 --rpm 600 --sensor P1.Y
+    # varios niveles -> una figura por combinacion (rep{1,3} x iso{32,68} x ...)
+    python inspeccionar_espectro.py --entrada resultados_fft.txt \
+        --rep 1,3 --iso 32,68 --sensor P1.Y
 
-Si la combinacion no existe, el script lista las disponibles.
+Si ningun filtro coincide, el script lista las condiciones disponibles.
 """
 
 from __future__ import annotations
@@ -39,7 +45,7 @@ import matplotlib.pyplot as plt
 from scipy.signal import find_peaks, peak_prominences
 
 from deteccion_picos import (
-    cargar_espectros, analizar_espectro,
+    cargar_espectros, analizar_espectro, parse_niveles, filtrar_condiciones,
     FRACCION_PROMINENCIA, DIST_BINS, N_ARMONICOS, TOL_ORDEN, BAND_1X, ANCHO_BINS_NOTCH,
 )
 
@@ -191,49 +197,68 @@ def main(args) -> int:
         return 1
     arr = cargar_espectros(entrada)
 
-    sel = _seleccionar(arr, args.rep, args.iso, args.dsb, args.rpm, args.sensor)
-    if sel is None:
-        print(f"No hay datos para rep{args.rep} iso{args.iso} dsb{args.dsb} "
-              f"rpm{args.rpm:g} {args.sensor}.\n")
+    # filtro por niveles: solo las combinaciones de los niveles indicados
+    sub = filtrar_condiciones(
+        arr, parse_niveles(args.rep, int), parse_niveles(args.iso, int),
+        parse_niveles(args.dsb, int), parse_niveles(args.rpm, float),
+        parse_niveles(args.sensor, str))
+    if len(sub) == 0:
+        print("Ninguna condicion pasa el filtro indicado (rep/iso/dsb/rpm/sensor).\n")
         _listar_disponibles(arr)
         return 1
-    f, a, rpm_med = sel
 
-    det = analizar_espectro(
-        f, a, args.fraccion, args.dist_bins, args.fmin, args.fmax,
-        rpm=rpm_med, quitar_armonicos=not args.conservar_armonicos,
-        n_armonicos=args.n_armonicos, tol_orden=args.tol_orden,
-        band_1x=args.band_1x, ancho_bins=args.ancho_bins)
+    # enumera todas las combinaciones (rep, iso, dsb, rpm, sensor) que pasan
+    combos = sorted({(int(r), int(i), int(d), float(v), str(s)) for r, i, d, v, s in zip(
+        sub["rep"], sub["iso"], sub["dsb"], sub["rpm_nominal"], sub["sensor"])})
+    if args.limit:
+        combos = combos[:args.limit]
 
     outdir = Path(args.outdir).expanduser().resolve() if args.outdir else entrada.parent
     outdir.mkdir(parents=True, exist_ok=True)
-    nombre = (f"inspeccion_rep{args.rep}_iso{args.iso}_dsb{args.dsb}_"
-              f"rpm{args.rpm:g}_{args.sensor}.png")
-    salida = outdir / nombre
+    print(f"Condiciones que pasan el filtro: {len(combos)}")
 
-    info = {"rep": args.rep, "iso": args.iso, "dsb": args.dsb, "rpm": args.rpm,
-            "sensor": args.sensor, "fraccion": args.fraccion,
-            "n_armonicos": args.n_armonicos, "ancho_bins": args.ancho_bins}
-    graficar(det, info, salida)
+    n_ok = 0
+    for rep, iso, dsb, rpm, sensor in combos:
+        sel = _seleccionar(sub, rep, iso, dsb, rpm, sensor)
+        if sel is None:
+            continue
+        f, a, rpm_med = sel
+        det = analizar_espectro(
+            f, a, args.fraccion, args.dist_bins, args.fmin, args.fmax,
+            rpm=rpm_med, quitar_armonicos=not args.conservar_armonicos,
+            n_armonicos=args.n_armonicos, tol_orden=args.tol_orden,
+            band_1x=args.band_1x, ancho_bins=args.ancho_bins)
 
-    print(f"1X estimado: {det['f1']:.3f} Hz" if det["f1"] else "1X: no estimado")
-    print(f"Picos detectados ({len(det['picos_freq'])}): "
-          f"{', '.join(f'{w:.3f}' for w in det['picos_freq'])} Hz")
-    print(f"Figura: {salida}")
+        nombre = (f"inspeccion_rep{rep}_iso{iso}_dsb{dsb}_rpm{rpm:g}_{sensor}.png")
+        salida = outdir / nombre
+        info = {"rep": rep, "iso": iso, "dsb": dsb, "rpm": rpm, "sensor": sensor,
+                "fraccion": args.fraccion, "n_armonicos": args.n_armonicos,
+                "ancho_bins": args.ancho_bins}
+        graficar(det, info, salida)
+        picos = ", ".join(f"{w:.2f}" for w in det["picos_freq"]) or "(ninguno)"
+        f1txt = f"{det['f1']:.3f}" if det["f1"] else "n/a"
+        print(f"  OK rep{rep}_iso{iso}_dsb{dsb}_rpm{rpm:g}_{sensor}: "
+              f"1X={f1txt} Hz | picos={picos} -> {salida.name}")
+        n_ok += 1
+
+    print(f"\nListo. {n_ok} figuras en: {outdir}")
     return 0
 
 
 def construir_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Inspeccion visual de la deteccion de picos para una condicion.")
+        description="Inspeccion visual de la deteccion de picos. Filtra por niveles "
+                    "(listas separadas por comas) y genera una figura por condicion.")
     p.add_argument("--entrada", default="resultados_fft.txt",
                    help="Archivo .txt o .npy de procesar_fft.py")
-    p.add_argument("--rep", type=int, required=True, help="Repeticion")
-    p.add_argument("--iso", type=int, required=True, help="Viscosidad ISO (32/46/68)")
-    p.add_argument("--dsb", type=int, required=True, help="Desbalance (1/2/3)")
-    p.add_argument("--rpm", type=float, required=True, help="RPM nominal")
-    p.add_argument("--sensor", required=True, help="Sensor (P1.Y, P1.X, P2.Y, P2.X)")
+    # filtros por niveles (listas separadas por comas; vacio = cualquiera)
+    p.add_argument("--rep", default="", help="Niveles de repeticion, ej. 1,3 (vacio = todos)")
+    p.add_argument("--iso", default="", help="Niveles de viscosidad ISO, ej. 32,68 (vacio = todos)")
+    p.add_argument("--dsb", default="", help="Niveles de desbalance, ej. 1,2 (vacio = todos)")
+    p.add_argument("--rpm", default="", help="RPM nominales, ej. 600,900 (vacio = todas)")
+    p.add_argument("--sensor", default="", help="Sensores, ej. P1.Y,P2.X (vacio = todos)")
     p.add_argument("--outdir", default="", help="Carpeta de salida (def: la de la entrada)")
+    p.add_argument("--limit", type=int, default=0, help="Maximo de figuras a generar (0 = sin limite)")
     # parametros de deteccion (mismos que deteccion_picos.py)
     p.add_argument("--fraccion", type=float, default=FRACCION_PROMINENCIA)
     p.add_argument("--dist-bins", dest="dist_bins", type=int, default=DIST_BINS)

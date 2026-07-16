@@ -148,6 +148,18 @@ python deteccion_picos.py --entrada resultados_fft.txt --n-armonicos 12 --ancho-
 python deteccion_picos.py --entrada resultados_fft.txt --conservar-armonicos
 ```
 
+**Filtrado por niveles:** con `--rep`, `--iso`, `--dsb`, `--rpm` y `--sensor` se
+indican **listas de niveles** (separadas por comas); solo se procesan las
+condiciones que son una combinación de esos niveles. Una propiedad sin niveles
+admite cualquier valor.
+
+```bash
+# solo iso 32 y 68, rpm 600 y 1200, cualquier rep/dsb, sensor P1.Y
+python deteccion_picos.py --entrada resultados_fft.txt --iso 32,68 --rpm 600,1200 --sensor P1.Y
+```
+
+El diagrama de dispersión dibuja las líneas de orden **1X…20X** como referencia.
+
 Genera, en la carpeta de salida:
 
 * **`picos_detectados.txt`** — tabla con una fila por archivo·sensor:
@@ -182,15 +194,23 @@ genera una figura de 3 paneles con el mismo pipeline que `deteccion_picos.py`:
    prominencia (`máx·fracción`), distancia mínima, 1X, nº de armónicos, `df`, y
    la prominencia real de cada pico dibujada como barra vertical.
 
+Igual que `deteccion_picos.py`, filtra por **listas de niveles** (`--rep`,
+`--iso`, `--dsb`, `--rpm`, `--sensor`; vacío = cualquiera) y genera **una figura
+por cada combinación** que pasa el filtro.
+
 ```bash
+# una sola condición
 python inspeccionar_espectro.py --entrada resultados_fft.txt \
     --rep 1 --iso 46 --dsb 1 --rpm 600 --sensor P1.Y
+# varios niveles -> una figura por combinación (rep{1,3} × iso{32,68} × …)
+python inspeccionar_espectro.py --entrada resultados_fft.txt \
+    --rep 1,3 --iso 32,68 --sensor P1.Y
 ```
 
 Acepta los mismos parámetros de detección (`--fraccion`, `--n-armonicos`,
 `--ancho-bins`, …), así que sirve para **calibrar** esos valores viendo el efecto
-antes de lanzar `deteccion_picos.py` sobre toda la base. Si la combinación no
-existe, lista las disponibles.
+antes de lanzar `deteccion_picos.py` sobre toda la base. `--limit N` acota el
+número de figuras; si ningún filtro coincide, lista las disponibles.
 
 ## Formato de salida (`.txt`)
 

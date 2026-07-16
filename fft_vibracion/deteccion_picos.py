@@ -126,6 +126,45 @@ def cargar_espectros(path: Path) -> np.ndarray:
 
 
 # ============================================================
+# FILTRADO POR NIVELES DE LAS PROPIEDADES (rep, iso, dsb, rpm, sensor)
+# ============================================================
+
+def parse_niveles(texto: str | None, tipo):
+    """Convierte '1,3' -> {1, 3} con el tipo dado. Vacio/None -> None (= cualquiera)."""
+    if not texto:
+        return None
+    vals = set()
+    for tok in str(texto).replace(";", ",").split(","):
+        tok = tok.strip()
+        if tok:
+            vals.add(tipo(tok))
+    return vals or None
+
+
+def filtrar_condiciones(arr: np.ndarray, reps=None, isos=None, dsbs=None,
+                        rpms=None, sensores=None) -> np.ndarray:
+    """Devuelve las filas cuya combinacion de niveles pasa el filtro.
+
+    Cada argumento es un conjunto de niveles admitidos para esa propiedad, o None
+    para admitir cualquier valor. El resultado son las filas que cumplen TODAS las
+    restricciones a la vez (combinacion de los niveles especificados).
+    """
+    m = np.ones(len(arr), dtype=bool)
+    if reps:
+        m &= np.isin(arr["rep"].astype(int), list(reps))
+    if isos:
+        m &= np.isin(arr["iso"].astype(int), list(isos))
+    if dsbs:
+        m &= np.isin(arr["dsb"].astype(int), list(dsbs))
+    if rpms:
+        m &= np.isin(np.round(arr["rpm_nominal"].astype(float), 6),
+                     [round(float(x), 6) for x in rpms])
+    if sensores:
+        m &= np.isin(np.asarray(arr["sensor"]).astype(str), list(sensores))
+    return arr[m]
+
+
+# ============================================================
 # DETECCION DE PICOS POR ESPECTRO (procedimiento del .m)
 # ============================================================
 
@@ -369,6 +408,7 @@ def _dibujar_scatter(filas, ax, titulo, con_ordenes=True):
     dsbs = sorted({f["dsb"] for f in filas})
     rpms = sorted({f["rpm"] for f in filas})
 
+    ymax_data = 0.0
     for f in filas:
         if len(f["omegas"]) == 0:
             continue
@@ -377,14 +417,22 @@ def _dibujar_scatter(filas, ax, titulo, con_ordenes=True):
         ax.scatter([f["rpm"]] * len(f["omegas"]), f["omegas"],
                    c=color, marker=marker, s=45, alpha=0.75,
                    edgecolors="k", linewidths=0.4)
+        ymax_data = max(ymax_data, float(np.max(f["omegas"])))
 
-    # lineas de orden 1X, 2X, 3X como referencia (freq = n * rpm/60)
+    # fija la escala Y segun los datos, para que las lineas de orden no la deformen
+    if ymax_data > 0:
+        ax.set_ylim(0, ymax_data * 1.08)
+    ylim_top = ax.get_ylim()[1]
+
+    # lineas de orden 1X..20X como referencia (freq = n * rpm/60)
     if con_ordenes and rpms:
         xr = np.array([min(rpms), max(rpms)], dtype=float)
-        for n in (1, 2, 3):
-            ax.plot(xr, n * xr / 60.0, ls="--", lw=0.8, color="gray", alpha=0.5)
-            ax.text(xr[-1], n * xr[-1] / 60.0, f" {n}X", fontsize=7,
-                    color="gray", va="center")
+        for n in range(1, 21):
+            y = n * xr / 60.0
+            ax.plot(xr, y, ls="--", lw=0.7, color="gray", alpha=0.45)
+            if y[-1] <= ylim_top:   # etiqueta solo si la linea entra en la vista
+                ax.text(xr[-1], y[-1], f" {n}X", fontsize=6.5,
+                        color="gray", va="center")
 
     ax.set_xlabel("Velocidad (RPM)")
     ax.set_ylabel("Frecuencia (Hz)")
@@ -444,6 +492,15 @@ def main(args) -> int:
         print(f"ERROR: a la entrada le faltan columnas: {faltan}")
         return 1
 
+    # filtro por niveles: solo las combinaciones de los niveles indicados
+    arr = filtrar_condiciones(
+        arr, parse_niveles(args.rep, int), parse_niveles(args.iso, int),
+        parse_niveles(args.dsb, int), parse_niveles(args.rpm, float),
+        parse_niveles(args.sensor, str))
+    if len(arr) == 0:
+        print("Ninguna condicion pasa el filtro indicado (rep/iso/dsb/rpm/sensor).")
+        return 1
+
     filas = procesar(arr, args)
     if not filas:
         print("No se pudo formar ningun espectro.")
@@ -471,6 +528,12 @@ def construir_parser() -> argparse.ArgumentParser:
                    help="Archivo .txt o .npy generado por procesar_fft.py")
     p.add_argument("--outdir", default="",
                    help="Carpeta de salida (def: la misma de la entrada)")
+    # filtros por niveles (listas separadas por comas; vacio = cualquiera)
+    p.add_argument("--rep", default="", help="Niveles de repeticion, ej. 1,3 (vacio = todos)")
+    p.add_argument("--iso", default="", help="Niveles de viscosidad ISO, ej. 32,68 (vacio = todos)")
+    p.add_argument("--dsb", default="", help="Niveles de desbalance, ej. 1,2 (vacio = todos)")
+    p.add_argument("--rpm", default="", help="RPM nominales, ej. 600,900 (vacio = todas)")
+    p.add_argument("--sensor", default="", help="Sensores, ej. P1.Y,P2.X (vacio = todos)")
     p.add_argument("--fraccion", type=float, default=FRACCION_PROMINENCIA,
                    help="MinPeakProminence = max(espectro) * fraccion (def: 0.1)")
     p.add_argument("--dist-bins", dest="dist_bins", type=int, default=DIST_BINS,
