@@ -249,13 +249,20 @@ def _mascara_sincrona(f: np.ndarray, a: np.ndarray, f1: float | None, n_max: int
     if len(picos) == 0:
         return mask, intervalos, picos_sinc
     fpicos = f[picos]
+    win = max(tol_orden * f1, 1.5 * df)
+
+    # Ordenes a buscar: +1X..+NX y tambien -1X..-NX. Los ordenes negativos solo
+    # existen en un espectro complejo (full spectrum); en un espectro solo-positivo
+    # los centros negativos quedan fuera de rango y no marcan nada (compatibilidad).
+    centros = []
+    for n in range(1, n_max + 1):
+        centros.append((n * f1, n))
+        centros.append((-n * f1, -n))
 
     usados: set[int] = set()
-    for n in range(1, n_max + 1):
-        centro = n * f1
-        if centro - df > f[-1]:
-            break
-        win = max(tol_orden * f1, 1.5 * df)
+    for centro, n in centros:
+        if centro < f[0] - win or centro > f[-1] + win:
+            continue
         d = np.abs(fpicos - centro)
         j = int(np.argmin(d))
         if d[j] > win:
@@ -409,6 +416,7 @@ def _dibujar_scatter(filas, ax, titulo, con_ordenes=True):
     rpms = sorted({f["rpm"] for f in filas})
 
     ymax_data = 0.0
+    ymin_data = 0.0
     for f in filas:
         if len(f["omegas"]) == 0:
             continue
@@ -418,21 +426,27 @@ def _dibujar_scatter(filas, ax, titulo, con_ordenes=True):
                    c=color, marker=marker, s=45, alpha=0.75,
                    edgecolors="k", linewidths=0.4)
         ymax_data = max(ymax_data, float(np.max(f["omegas"])))
+        ymin_data = min(ymin_data, float(np.min(f["omegas"])))
 
+    hay_neg = ymin_data < 0   # full spectrum (frecuencias negativas presentes)
     # fija la escala Y segun los datos, para que las lineas de orden no la deformen
-    if ymax_data > 0:
-        ax.set_ylim(0, ymax_data * 1.08)
-    ylim_top = ax.get_ylim()[1]
+    if ymax_data > 0 or hay_neg:
+        ax.set_ylim(ymin_data * 1.08 if hay_neg else 0, ymax_data * 1.08)
+    ylo, yhi = ax.get_ylim()
 
-    # lineas de orden 1X..20X como referencia (freq = n * rpm/60)
+    # lineas de orden +/-1X..20X como referencia (freq = +/- n * rpm/60)
     if con_ordenes and rpms:
         xr = np.array([min(rpms), max(rpms)], dtype=float)
+        if hay_neg:
+            ax.axhline(0, color="gray", lw=0.8, alpha=0.6)
+        signos = (1, -1) if hay_neg else (1,)
         for n in range(1, 21):
-            y = n * xr / 60.0
-            ax.plot(xr, y, ls="--", lw=0.7, color="gray", alpha=0.45)
-            if y[-1] <= ylim_top:   # etiqueta solo si la linea entra en la vista
-                ax.text(xr[-1], y[-1], f" {n}X", fontsize=6.5,
-                        color="gray", va="center")
+            for s in signos:
+                y = s * n * xr / 60.0
+                ax.plot(xr, y, ls="--", lw=0.7, color="gray", alpha=0.45)
+                if ylo <= y[-1] <= yhi:
+                    etq = f" {s*n:+d}X" if hay_neg else f" {n}X"
+                    ax.text(xr[-1], y[-1], etq, fontsize=6.5, color="gray", va="center")
 
     ax.set_xlabel("Velocidad (RPM)")
     ax.set_ylabel("Frecuencia (Hz)")

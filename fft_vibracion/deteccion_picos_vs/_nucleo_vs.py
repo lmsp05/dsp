@@ -181,6 +181,7 @@ def _plot_condicion(filas, ax, titulo):
     filas = sorted(filas, key=lambda f: (f["rep"], f["iso"], f["dsb"]))
     labels = [f"r{f['rep']}·i{f['iso']}·d{f['dsb']}" for f in filas]
     ymax = 0.0
+    ymin = 0.0
     for x, f in enumerate(filas):
         if len(f["omegas"]) == 0:
             continue
@@ -188,10 +189,13 @@ def _plot_condicion(filas, ax, titulo):
                    c=COLORES_ISO.get(f["iso"], "gray"), marker=FORMAS_DSB.get(f["dsb"], "x"),
                    s=45, alpha=0.75, edgecolors="k", linewidths=0.4)
         ymax = max(ymax, float(np.max(f["omegas"])))
+        ymin = min(ymin, float(np.min(f["omegas"])))
     ax.set_xticks(range(len(filas)))
     ax.set_xticklabels(labels, rotation=90, fontsize=7)
-    if ymax > 0:
-        ax.set_ylim(0, ymax * 1.08)
+    if ymin < 0:
+        ax.axhline(0, color="gray", lw=0.8, alpha=0.6)
+    if ymax > 0 or ymin < 0:
+        ax.set_ylim(ymin * 1.08 if ymin < 0 else 0, ymax * 1.08)
     ax.set_xlabel("Condicion (rep·iso·dsb)")
     ax.set_ylabel("Frecuencia (Hz)")
     ax.set_title(titulo)

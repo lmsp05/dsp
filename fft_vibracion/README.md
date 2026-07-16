@@ -16,6 +16,7 @@ de amplitud **y** fase.
 | Script | Qué hace |
 |---|---|
 | `procesar_fft.py` | Recorre la carpeta de datos, procesa cada archivo y escribe un `.txt` tabular con el espectro de los 4 proximitores. |
+| `procesar_fft_complejo.py` | Igual, pero calcula el **full spectrum** de la señal compleja `z = x+iy` por cojinete (C1, C2), con **frecuencias negativas** (precesión retrógrada) además de las positivas (directa). |
 | `txt_a_npy.py` | Convierte ese `.txt` en un `.npy` (array estructurado de numpy) fácil de filtrar. |
 | `revision_rpms.py` | **Diagnóstico** de la RPM y de la segmentación: una figura por archivo (RPM vs tiempo, bloques, tramos aceptados/rechazados/seleccionado) + un CSV de métricas de dispersión. |
 | `rpm_instantaneas.py` | Script sencillo: guarda la RPM instantánea (pulso a pulso) de cada archivo con su condición, en un `.txt`. |
@@ -103,6 +104,37 @@ es de fiar y la diferencia con la nominal es real; si difieren (o hay outliers),
 es un artefacto de detección de pulsos. Ojo también con un **escalón de RPM**
 dentro del registro: la media *global* se aleja de la nominal por mezclar dos
 velocidades, pero la del **tramo seleccionado** sí es correcta.
+
+## Full spectrum / espectro complejo (`procesar_fft_complejo.py`)
+
+En vez de un espectro por proximitor, calcula el espectro de la señal de órbita
+compleja de cada cojinete:
+
+```
+C1 = P1.X + i·P1.Y      C2 = P2.X + i·P2.Y
+```
+
+Como `z` es compleja, su FFT no es simétrica: cada frecuencia positiva o negativa
+es una componente física distinta:
+
+* **frecuencia positiva** → precesión **directa** (forward whirl, sentido del giro),
+* **frecuencia negativa** → precesión **retrógrada** (backward whirl).
+
+Así se pueden detectar los **modos retrógrados** (frecuencias negativas),
+invisibles en el espectro de un solo proximitor. La amplitud es el radio de la
+componente circular a esa frecuencia (sin el factor ×2 del espectro real).
+
+```bash
+python procesar_fft_complejo.py --data-dir /ruta/datos --salida resultados_fft_complejo.txt
+```
+
+El `.txt` tiene **las mismas columnas** que `procesar_fft.py` (la columna
+`sensor` vale `C1`/`C2`, y `frecuencia_Hz` abarca negativas y positivas), de modo
+que `deteccion_picos.py`, sus variantes y la inspección lo procesan **sin
+cambios**: la eliminación de armónicos quita el 1X y sus órdenes tanto en `+n·f1`
+como en `−n·f1`, y las gráficas dibujan las líneas de orden `±nX` y el eje de
+frecuencia con su parte negativa. Sobre un espectro real normal (solo positivas)
+el comportamiento es idéntico al de antes.
 
 ## Detección de picos (`deteccion_picos.py`)
 
