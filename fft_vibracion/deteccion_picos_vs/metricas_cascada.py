@@ -48,12 +48,13 @@ from deteccion_picos import (  # noqa: E402
     cargar_espectros, filtrar_condiciones, parse_niveles,
 )
 
-# Fracciones de prominencia (valores del .m)
-FRAC_RMS = 0.05
-FRAC_KURT = 0.10
-FRAC_RIDGE = 0.20
-PROM_RIDGE_FILA = 0.10   # MinPeakProminence por fila para el ridge
-DIST_RIDGE = 5           # MinPeakDistance (bins) del ridge
+# Fracciones de prominencia POCO severas (el .m usaba 0.05/0.10/0.20; se bajan
+# para dejar pasar picos poco perceptibles). Configurables por CLI.
+FRAC_RMS = 0.015
+FRAC_KURT = 0.03
+FRAC_RIDGE = 0.05
+PROM_RIDGE_FILA = 0.04   # MinPeakProminence por fila para el ridge (mas bajo = mas crestas)
+DIST_RIDGE = 3           # MinPeakDistance (bins) del ridge
 
 
 # ============================================================

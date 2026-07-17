@@ -61,6 +61,7 @@ cada modo el conjunto es lo que esa versión combina:
 | `v2` | sensores + velocidades | condición | **Sí** | freq vs condición |
 | `v3` | sensores + velocidades | condición | **No** | freq vs condición |
 | `v4` | todos los espectros | global | **No** | curva métrica vs freq |
+| `v5` | las RPM (cascada) | condición · sensor | **No** | cuadrícula 5×4 (= v0 sin eliminación) |
 
 Para v1–v4 genera, en `--outdir`: `picos_RMS.png`, `picos_Kurtosis.png`,
 `picos_Ridge.png`, `picos_combinado.png` y `picos_detectados.txt`. Para v0 genera
@@ -74,6 +75,12 @@ python deteccion_picos_vs/metricas_versiones.py --modo v1 --entrada resultados_f
 > Nota: RMS y Ridge son los detectores robustos de naturales; la **Kurtosis**
 > necesita variabilidad real entre los miembros del conjunto (con sensores muy
 > correlacionados o pocas RPM sale degenerada).
+>
+> Los **criterios son poco severos por defecto** (fracciones de prominencia
+> RMS 0.015 / Kurtosis 0.03 / Ridge 0.05 y prominencia por fila del ridge 0.04),
+> para dejar pasar picos poco perceptibles. Se ajustan con `--frac-rms`,
+> `--frac-kurt`, `--frac-ridge` y `--prom-ridge-fila` (súbelos para ser más
+> estricto). Lo mismo aplica a `metricas_cascada.py`.
 
 ## Ejecutar todas a la vez
 

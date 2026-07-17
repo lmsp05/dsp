@@ -53,9 +53,11 @@ from deteccion_picos import (  # noqa: E402
 )
 from _nucleo_vs import _plot_condicion  # noqa: E402
 
-FRAC = {"RMS": 0.05, "Kurtosis": 0.10, "Ridge": 0.20}
-PROM_RIDGE_FILA = 0.10
-DIST_RIDGE = 5
+# Fracciones de prominencia POCO severas (dejan pasar picos poco perceptibles).
+# El .m usaba 0.05 / 0.10 / 0.20; aqui se bajan bastante. Configurables por CLI.
+FRAC = {"RMS": 0.015, "Kurtosis": 0.03, "Ridge": 0.05}
+PROM_RIDGE_FILA = 0.04   # prominencia por fila del ridge (mas baja = mas crestas)
+DIST_RIDGE = 3
 COL_MET = {"RMS": "tab:blue", "Kurtosis": "tab:green", "Ridge": "purple"}
 MRK_MET = {"RMS": "o", "Kurtosis": "s", "Ridge": "^"}
 METRICAS = ("RMS", "Kurtosis", "Ridge")
@@ -81,6 +83,8 @@ CONFIGS = {
                   "v3 · metrica sobre sensores+velocidades SIN eliminacion (por condicion)"),
     "v4": ConfigM("v4", (), False, "curva",
                   "v4 · metrica sobre todos los espectros (global) SIN eliminacion"),
+    "v5": ConfigM("v5", ("rep", "iso", "dsb", "sensor"), False, "v0grid",
+                  "v5 · metrica sobre RPM SIN eliminacion (por condicion y sensor)"),
 }
 
 
@@ -128,7 +132,7 @@ def _cascada(miembros, fmin, fmax):
     return grid, Z
 
 
-def _metricas(Z):
+def _metricas(Z, prom_ridge_fila):
     rms = np.sqrt(np.mean(Z ** 2, axis=0))
     kurt = np.nan_to_num(sp_kurtosis(Z, axis=0, fisher=False, bias=True), nan=0.0,
                          posinf=0.0, neginf=0.0)
@@ -137,7 +141,7 @@ def _metricas(Z):
         mx = float(np.max(fila))
         if mx <= 0:
             continue
-        loc, _ = find_peaks(fila, prominence=mx * PROM_RIDGE_FILA, distance=DIST_RIDGE)
+        loc, _ = find_peaks(fila, prominence=mx * prom_ridge_fila, distance=DIST_RIDGE)
         ridge_map[i, loc] = 1
     ridge = ridge_map.sum(axis=0)
     return {"RMS": rms, "Kurtosis": kurt, "Ridge": ridge}
@@ -152,14 +156,15 @@ def _picos(grid, curva, frac):
 
 
 def _agrupar(individuales, cfg: ConfigM, args):
+    fracs = {"RMS": args.frac_rms, "Kurtosis": args.frac_kurt, "Ridge": args.frac_ridge}
     grupos = defaultdict(list)
     for e in individuales:
         grupos[tuple(e[k] for k in cfg.out_key)].append(e)
     filas = []
     for clave, miembros in grupos.items():
         grid, Z = _cascada([(m["f"], m["amp"]) for m in miembros], args.fmin, args.fmax)
-        curvas = _metricas(Z)
-        picos = {M: _picos(grid, curvas[M], FRAC[M]) for M in METRICAS}
+        curvas = _metricas(Z, args.prom_ridge_fila)
+        picos = {M: _picos(grid, curvas[M], fracs[M]) for M in METRICAS}
         fila = {k: v for k, v in zip(cfg.out_key, clave)}
         fila.setdefault("iso", miembros[0]["iso"])
         fila.setdefault("dsb", miembros[0]["dsb"])
@@ -343,6 +348,11 @@ def main() -> int:
     p.add_argument("--tol-orden", dest="tol_orden", type=float, default=TOL_ORDEN)
     p.add_argument("--band-1x", dest="band_1x", type=float, default=BAND_1X)
     p.add_argument("--ancho-bins", dest="ancho_bins", type=float, default=ANCHO_BINS_NOTCH)
+    # criterios de las metricas (mas bajos = menos severos, dejan pasar picos debiles)
+    p.add_argument("--frac-rms", dest="frac_rms", type=float, default=FRAC["RMS"])
+    p.add_argument("--frac-kurt", dest="frac_kurt", type=float, default=FRAC["Kurtosis"])
+    p.add_argument("--frac-ridge", dest="frac_ridge", type=float, default=FRAC["Ridge"])
+    p.add_argument("--prom-ridge-fila", dest="prom_ridge_fila", type=float, default=PROM_RIDGE_FILA)
     args, _ = p.parse_known_args()
 
     cfg = CONFIGS[args.modo]

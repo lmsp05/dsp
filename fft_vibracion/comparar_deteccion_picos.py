@@ -42,6 +42,7 @@ VARIANTES = [
     (MET, "metricas_v2", ["--modo", "v2"]),
     (MET, "metricas_v3", ["--modo", "v3"]),
     (MET, "metricas_v4", ["--modo", "v4"]),
+    (MET, "metricas_v5", ["--modo", "v5"]),
 ]
 
 
