@@ -319,7 +319,7 @@ def _fmt_p(p):
     return "<0.001" if p < 0.001 else f"{p:.3f}"
 
 
-def fig_contribucion(tablas, ruta):
+def fig_contribucion(tablas, ruta, extra=""):
     """Contribucion de cada fuente a la suma de cuadrados, por sensor."""
     fuentes = [f for f in ETIQUETAS if f != "Repeticion (bloque)"]
     etiquetas = [ETIQUETAS[f] for f in fuentes]
@@ -344,7 +344,7 @@ def fig_contribucion(tablas, ruta):
         ax.set_xticks(range(len(fuentes)))
         ax.set_xticklabels(etiquetas, rotation=45, ha="right", fontsize=9)
         ax.grid(axis="y", linestyle="--", alpha=0.4)
-    fig.suptitle("Descomposicion de la variabilidad — split-split-plot\n"
+    fig.suptitle(f"Descomposicion de la variabilidad — split-split-plot{extra}\n"
                  "(* = significativo al 5 % con SU termino de error; "
                  "gris = estratos de error)",
                  fontsize=14, fontweight="bold")
@@ -352,7 +352,7 @@ def fig_contribucion(tablas, ruta):
     plt.close(fig)
 
 
-def fig_comparacion(tablas, ingenuos, ruta):
+def fig_comparacion(tablas, ingenuos, ruta, extra=""):
     """Lo que cambia al respetar el diseno: F y p de cada efecto, ambos modelos."""
     fuentes = ["Viscosidad", "Desbalanceo", "Viscosidad x Desbalanceo", "Velocidad",
                "Viscosidad x Velocidad", "Desbalanceo x Velocidad",
@@ -384,7 +384,7 @@ def fig_comparacion(tablas, ingenuos, ruta):
         ax.set_xticklabels(et, rotation=45, ha="right", fontsize=9)
         ax.grid(axis="y", linestyle="--", alpha=0.4)
     axes[0, 0].legend(fontsize=9, loc="upper left")
-    fig.suptitle("Consecuencia de respetar el diseno de parcelas subdivididas\n"
+    fig.suptitle(f"Consecuencia de respetar el diseno de parcelas subdivididas{extra}\n"
                  "las barras verdes son la evidencia REAL; las naranjas, la que "
                  "se obtiene si se ignora la estructura del ensayo",
                  fontsize=14, fontweight="bold")
@@ -392,7 +392,7 @@ def fig_comparacion(tablas, ingenuos, ruta):
     plt.close(fig)
 
 
-def fig_efecto_viscosidad(resultados, viscs, ruta, unidad):
+def fig_efecto_viscosidad(resultados, viscs, ruta, unidad, extra=""):
     """Medias por aceite con el intervalo que corresponde al error de parcela."""
     fig, axes = plt.subplots(1, 4, figsize=(17, 4.6), constrained_layout=True)
     for ax, sensor in zip(axes, config.SENSORES):
@@ -408,13 +408,13 @@ def fig_efecto_viscosidad(resultados, viscs, ruta, unidad):
         ax.set_xticklabels([f"ISO {v}" for v in viscs])
         ax.grid(axis="y", linestyle="--", alpha=0.4)
         ax.set_ylabel(unidad)
-    fig.suptitle("Efecto de la viscosidad — media por aceite con IC 95 % basado "
-                 "en Error(a) (gl = 4)", fontsize=13, fontweight="bold")
+    fig.suptitle(f"Efecto de la viscosidad{extra} — media por aceite con IC 95 % "
+                 f"basado en Error(a)", fontsize=13, fontweight="bold")
     fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
     plt.close(fig)
 
 
-def fig_interacciones(df, respuestas, viscs, desbs, vels, ruta, unidad):
+def fig_interacciones(df, respuestas, viscs, desbs, vels, ruta, unidad, extra=""):
     """Interaccion viscosidad x velocidad (arriba) y viscosidad x desbalanceo."""
     x = np.arange(len(vels))
     fig, axes = plt.subplots(2, 4, figsize=(18, 8.5), constrained_layout=True)
@@ -426,8 +426,9 @@ def fig_interacciones(df, respuestas, viscs, desbs, vels, ruta, unidad):
             ax.plot(x, m.reindex(vels).to_numpy(), lw=1.8,
                     color=comun.color_condicion(v, 3), label=f"ISO {v}")
         ax.set_title(f"{sensor}", fontweight="bold")
-        ax.set_xticks(x[::2])
-        ax.set_xticklabels([str(v) for v in vels[::2]], rotation=60, fontsize=7)
+        paso = 1 if len(vels) <= 8 else 2      # con pocas rpm se etiquetan todas
+        ax.set_xticks(x[::paso])
+        ax.set_xticklabels([str(v) for v in vels[::paso]], rotation=60, fontsize=7)
         ax.grid(alpha=0.3, ls="--")
         if j == 0:
             ax.set_ylabel(f"media {unidad}")
@@ -445,13 +446,67 @@ def fig_interacciones(df, respuestas, viscs, desbs, vels, ruta, unidad):
         if j == 0:
             ax.set_ylabel(f"media {unidad}")
         ax.set_xlabel("desbalanceo", fontsize=9)
-    fig.suptitle("Interacciones: arriba viscosidad x velocidad, abajo "
-                 "viscosidad x desbalanceo", fontsize=14, fontweight="bold")
+    n_rep = len(df["Repeticion"].unique())
+    fig.suptitle(
+        f"Interacciones{extra}\n"
+        f"arriba: viscosidad x velocidad — cada punto promedia "
+        f"{n_rep} rep x {len(desbs)} desbalanceos = {n_rep * len(desbs)} valores   |   "
+        f"abajo: viscosidad x desbalanceo — cada punto promedia "
+        f"{n_rep} rep x {len(vels)} velocidades = {n_rep * len(vels)} valores",
+        fontsize=12, fontweight="bold")
     fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
     plt.close(fig)
 
 
-def fig_estratos(comps, ruta):
+def fig_viscosidad_por_grupo(resumen, viscs, ruta, unidad):
+    """
+    Como cambia el efecto de la viscosidad al recorrer los tramos de velocidad.
+
+    `resumen` = lista de (nombre_grupo, {sensor: medias_por_viscosidad},
+                          {sensor: p_viscosidad}).
+
+    Arriba: media por aceite en cada tramo. Abajo: evidencia del efecto en cada
+    tramo. Es la lectura que da sentido a una interaccion Visc x Vel
+    significativa: el efecto no es el mismo a todas las velocidades.
+    """
+    nombres = [n.replace("_", " ") for n, _, _ in resumen]
+    x = np.arange(len(resumen))
+    fig, axes = plt.subplots(2, 4, figsize=(18, 8), constrained_layout=True)
+
+    for j, sensor in enumerate(config.SENSORES):
+        ax = axes[0, j]
+        for iv, v in enumerate(viscs):
+            ax.plot(x, [m[sensor][iv] for _, m, _ in resumen], "o-", lw=2,
+                    color=comun.color_condicion(v, 3), label=f"ISO {v}")
+        ax.set_title(f"{sensor}", fontweight="bold")
+        ax.set_xticks(x)
+        ax.set_xticklabels(nombres, rotation=30, ha="right", fontsize=8)
+        ax.grid(alpha=0.3, ls="--")
+        if j == 0:
+            ax.set_ylabel(f"media {unidad}")
+            ax.legend(fontsize=9)
+
+        ax = axes[1, j]
+        p = np.array([max(pp[sensor], 1e-300) for _, _, pp in resumen])
+        ax.bar(x, -np.log10(p), 0.55,
+               color=["#27ae60" if q < 0.05 else "#bdc3c7" for q in p],
+               edgecolor="black", linewidth=0.4)
+        ax.axhline(-np.log10(0.05), color="black", ls="--", lw=1.2)
+        ax.text(-0.45, -np.log10(0.05), "p=0.05", va="bottom", fontsize=8)
+        ax.set_xticks(x)
+        ax.set_xticklabels(nombres, rotation=30, ha="right", fontsize=8)
+        ax.grid(axis="y", alpha=0.3, ls="--")
+        if j == 0:
+            ax.set_ylabel("evidencia  -log10(p)")
+    fig.suptitle("Efecto de la viscosidad tramo a tramo de velocidad\n"
+                 "arriba: media por aceite en cada tramo · abajo: evidencia del "
+                 "efecto (verde = significativo al 5 %)",
+                 fontsize=14, fontweight="bold")
+    fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
+    plt.close(fig)
+
+
+def fig_estratos(comps, ruta, extra=""):
     """De donde viene la variabilidad: montaje del aceite / del desbalanceo / ruido."""
     fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
     estratos = comps[config.SENSORES[0]]["Estrato"].tolist()
@@ -466,7 +521,7 @@ def fig_estratos(comps, ruta):
     ax.set_xticks(x)
     ax.set_xticklabels(config.SENSORES)
     ax.set_ylabel("% de la varianza aleatoria")
-    ax.set_title("Reparto de la variabilidad entre los estratos del diseno\n"
+    ax.set_title(f"Reparto de la variabilidad entre los estratos del diseno{extra}\n"
                  "(cuanto mayor es el morado, mas caro es cada dato de viscosidad)",
                  fontweight="bold")
     ax.legend(fontsize=9, loc="lower right")
@@ -500,7 +555,8 @@ def validar_diseno(reps, viscs, desbs, vels):
               "Error(a) ni Error(b).")
 
 
-def analizar(df, respuestas, unidad, destino: Path, sufijo: str = ""):
+def analizar(df, respuestas, unidad, destino: Path, sufijo: str = "",
+             figuras: bool = True):
     """Ejecuta el analisis completo y escribe tablas y figuras."""
     reps = sorted(df["Repeticion"].unique())
     viscs = sorted(df["Viscosidad"].unique())
@@ -554,16 +610,20 @@ def analizar(df, respuestas, unidad, destino: Path, sufijo: str = ""):
     comparacion = pd.DataFrame(filas)
     comparacion.to_csv(destino / f"comparacion_viscosidad{s}.csv", index=False)
 
-    if not sufijo:
-        fig_contribucion(tablas, destino / "p5_contribucion.png")
-        fig_comparacion(tablas, ingenuos, destino / "p5_ingenuo_vs_correcto.png")
-        fig_efecto_viscosidad(resultados, viscs, destino / "p5_efecto_viscosidad.png",
-                              unidad)
+    if figuras:
+        extra = f" — {sufijo.replace('_', ' ')}" if sufijo else ""
+        fig_contribucion(tablas, destino / f"p5_contribucion{s}.png", extra)
+        fig_comparacion(tablas, ingenuos,
+                        destino / f"p5_ingenuo_vs_correcto{s}.png", extra)
+        fig_efecto_viscosidad(resultados, viscs,
+                              destino / f"p5_efecto_viscosidad{s}.png", unidad, extra)
         fig_interacciones(df, respuestas, viscs, desbs, vels,
-                          destino / "p5_interacciones.png", unidad)
-        fig_estratos(comps, destino / "p5_estratos_varianza.png")
+                          destino / f"p5_interacciones{s}.png", unidad, extra)
+        fig_estratos(comps, destino / f"p5_estratos_varianza{s}.png", extra)
 
-    return tablas, ingenuos, comparacion, comps, pd.concat(posthoc, ignore_index=True)
+    medias = {sen: resultados[sen]["medias"] for sen in config.SENSORES}
+    return (tablas, ingenuos, comparacion, comps,
+            pd.concat(posthoc, ignore_index=True), medias)
 
 
 def main() -> int:
@@ -596,7 +656,7 @@ def main() -> int:
 
     destino = salida / config.DIR_ESTADISTICA
     try:
-        tablas, ingenuos, comparacion, comps, posthoc = analizar(
+        tablas, ingenuos, comparacion, comps, posthoc, _ = analizar(
             df, respuestas, unidad, destino)
     except ValueError as e:
         print(f"ERROR: {e}")
@@ -644,6 +704,7 @@ def main() -> int:
         print("\n" + "=" * 78)
         print("ANALISIS POR TRAMOS DE VELOCIDAD")
         print("=" * 78)
+        resumen = []
         for nombre, vels in GRUPOS_VELOCIDAD.items():
             sub = df[df["Velocidad"].isin(vels)]
             disponibles = sorted(sub["Velocidad"].unique())
@@ -651,13 +712,23 @@ def main() -> int:
                 print(f"  {nombre}: menos de 2 velocidades disponibles, se omite.")
                 continue
             try:
-                _, _, cmp_g, _, _ = analizar(sub, respuestas, unidad, destino, nombre)
+                _, _, cmp_g, _, _, medias_g = analizar(
+                    sub, respuestas, unidad, destino, nombre)
             except ValueError as e:
                 print(f"  {nombre}: {e}")
                 continue
             sig = (cmp_g["significativa_correcto"] == "SI").sum()
             print(f"  {nombre} ({len(disponibles)} rpm): viscosidad significativa "
                   f"en {sig}/4 sensores  (p min = {cmp_g['p_correcto'].min():.4g})")
+            resumen.append((nombre, medias_g,
+                            dict(zip(cmp_g["Sensor"], cmp_g["p_correcto"]))))
+
+        if len(resumen) >= 2:
+            viscs = sorted(df["Viscosidad"].unique())
+            fig_viscosidad_por_grupo(
+                resumen, viscs, destino / "p5_viscosidad_por_grupo.png", unidad)
+            print(f"\n  Figura comparativa entre tramos: "
+                  f"{destino / 'p5_viscosidad_por_grupo.png'}")
 
     print(f"\nResultados en: {destino}")
     return 0

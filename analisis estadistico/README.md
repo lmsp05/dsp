@@ -315,9 +315,34 @@ En `<salida>/p5_estadistica`:
 | `p5_interacciones.png` | viscosidad × velocidad y viscosidad × desbalanceo |
 | `p5_estratos_varianza.png` | de dónde viene la variabilidad del ensayo |
 
-Con `--grupos-velocidad` se repite el análisis dentro de cada tramo de rpm
+### Análisis por tramos de velocidad
+
+Con `--grupos-velocidad` se repite **todo** el análisis dentro de cada tramo de rpm
 (bajas / pre-crítica / 1ª crítica / altas), como hacía `f3_s1_v2.py` pero con los
-términos de error correctos.
+términos de error correctos. Genera los CSV y **también las 5 figuras** de cada
+tramo, con el sufijo del grupo:
+
+```
+p5_interacciones_Grupo_3_1a_critica.png
+p5_efecto_viscosidad_Grupo_3_1a_critica.png
+p5_contribucion_Grupo_3_1a_critica.png
+...
+```
+
+Más una figura adicional, `p5_viscosidad_por_grupo.png`, que compara los cuatro
+tramos entre sí: arriba la media por aceite en cada tramo, abajo la evidencia del
+efecto (verde = significativo). Es la lectura que da sentido a una interacción
+Visc × Vel significativa: el efecto de la viscosidad **no es el mismo a todas las
+velocidades**, y esta figura dice en qué régimen aparece.
+
+Los tramos se editan en `GRUPOS_VELOCIDAD`, al principio del script.
+
+> Hacer el análisis por tramos corrige de paso un sesgo de las figuras globales:
+> promediar la amplitud sobre las 15 velocidades queda dominado por la resonancia
+> (en los datos de prueba, 3 de las 15 velocidades aportan casi la mitad del
+> promedio). Dentro de un tramo, la media sí representa a ese régimen.
+> Por eso el título de `p5_interacciones*.png` indica cuántos valores promedia
+> cada punto en cada fila.
 
 Por defecto analiza los datos **compensados** (`p3_fasores_compensados.txt`); con
 `--entrada` se puede apuntar a `p1_fasores.txt` para analizar los sin compensar.
