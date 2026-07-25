@@ -67,3 +67,22 @@ los de tus aceites reales.
 > Nota: `mu` aquí es viscosidad **cinemática** (cSt). Si necesitas la **dinámica**
 > (Pa·s) para número de Sommerfeld, etc., hay que multiplicar por la densidad
 > ρ(T); puedo añadirlo si lo necesitas.
+
+---
+
+## Visualización de viscosidad (`graficar_viscosidad.py`)
+
+Crea un **scatter plot** que muestra la viscosidad promedio (`mu_prom`) en función
+de la velocidad de rotación, con codificación visual:
+
+* **Color** = tipo de aceite (ISO 32/46/68, diferentes colores)
+* **Forma de marcador** = nivel de desbalanceo (`dsb`: círculo / cuadrado / triángulo / etc.)
+
+```bash
+python graficar_viscosidad.py --entrada ensayos_mu.txt --salida ./graficos
+# opciones: --figsize ancho,alto  --dpi 150 (por defecto 12,8 y 150 dpi)
+```
+
+Acepta los mismos separadores que `mu_temperatura.py` (`--sep tab` / `--sep auto`).
+
+El gráfico se guarda como `viscosidad_scatter.png` en la carpeta de salida.
