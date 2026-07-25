@@ -90,9 +90,12 @@ def procesar(args) -> int:
     def col(nombre):
         return low.index(nombre) if nombre in low else None
 
-    i_vel, i_iso, i_dsb, i_mu_prom = (
-        col("velocidad"), col("iso"), col("dsb"), col("mu_prom")
-    )
+    i_vel = col("velocidad")
+    i_iso = col("iso")
+    i_dsb = col("dsb")
+    i_mu_prom = col("mu_prom")
+    i_rep = col("rep")  # Puede no existir
+
     faltan = [n for n, i in (("velocidad", i_vel), ("iso", i_iso),
                              ("dsb", i_dsb), ("mu_prom", i_mu_prom))
               if i is None]
@@ -105,7 +108,10 @@ def procesar(args) -> int:
     salida.mkdir(parents=True, exist_ok=True)
 
     # Lectura de datos
-    datos = {}  # {(iso, dsb): [(vel, mu_prom), ...]}
+    # Para gráfico general: {(iso, dsb): [(vel, mu_prom), ...]}
+    datos_general = {}
+    # Para gráficos por dsb: {dsb: {(iso, rep): [(vel, mu_prom), ...]}}
+    datos_por_dsb = {}
     n_filas = 0
     n_validas = 0
 
@@ -120,27 +126,39 @@ def procesar(args) -> int:
         iso_v = _a_int(campos[i_iso])
         dsb_v = _a_int(campos[i_dsb])
         mu_prom = _a_float(campos[i_mu_prom])
+        rep_v = _a_int(campos[i_rep]) if i_rep is not None else None
 
         # Saltamos filas con datos faltantes
         if vel is None or iso_v is None or dsb_v is None or mu_prom is None:
             continue
 
         n_validas += 1
-        clave = (iso_v, dsb_v)
-        if clave not in datos:
-            datos[clave] = []
-        datos[clave].append((vel, mu_prom))
+
+        # Datos para gráfico general
+        clave_general = (iso_v, dsb_v)
+        if clave_general not in datos_general:
+            datos_general[clave_general] = []
+        datos_general[clave_general].append((vel, mu_prom))
+
+        # Datos para gráficos por dsb
+        if dsb_v not in datos_por_dsb:
+            datos_por_dsb[dsb_v] = {}
+        clave_dsb = (iso_v, rep_v)
+        if clave_dsb not in datos_por_dsb[dsb_v]:
+            datos_por_dsb[dsb_v][clave_dsb] = []
+        datos_por_dsb[dsb_v][clave_dsb].append((vel, mu_prom))
 
     if n_validas == 0:
         print(f"ERROR: no hay filas con datos validos (leidas {n_filas})")
         return 1
 
-    # Crear figura
     figsize = tuple(map(float, args.figsize.split(","))) if args.figsize else (12, 8)
-    fig, ax = plt.subplots(figsize=figsize)
 
-    # Graficar cada combinacion (iso, dsb)
-    for (iso, dsb), puntos in sorted(datos.items()):
+    # =====================================================================
+    # 1. GRÁFICO GENERAL: viscosidad vs velocidad, colores por ISO, formas por DSB
+    # =====================================================================
+    fig, ax = plt.subplots(figsize=figsize)
+    for (iso, dsb), puntos in sorted(datos_general.items()):
         vel_list = [p[0] for p in puntos]
         mu_list = [p[1] for p in puntos]
 
@@ -151,21 +169,58 @@ def procesar(args) -> int:
         ax.scatter(vel_list, mu_list, c=color, marker=marcador, s=100,
                    alpha=0.7, label=label, edgecolors="black", linewidth=0.5)
 
-    # Configurar ejes y leyenda
     ax.set_xlabel("Velocidad de rotacion (RPM)", fontsize=12)
     ax.set_ylabel("Viscosidad promedio μ_prom (cSt)", fontsize=12)
     ax.set_title("Viscosidad vs Velocidad de Rotacion", fontsize=14, fontweight="bold")
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best", fontsize=10)
 
-    # Guardar figura
-    nombre_salida = f"viscosidad_scatter.png"
+    nombre_salida = "viscosidad_scatter.png"
     ruta_salida = salida / nombre_salida
     fig.savefig(ruta_salida, dpi=args.dpi, bbox_inches="tight")
     plt.close(fig)
+    print(f"  Grafico general guardado: {ruta_salida}")
 
-    print(f"Grafico guardado: {ruta_salida}")
-    print(f"Filas leidas: {n_filas} | Puntos graficados: {n_validas}")
+    # =====================================================================
+    # 2. GRÁFICOS POR DESBALANCEO: colores por ISO, formas por REP
+    # =====================================================================
+    rep_marcadores = {
+        1: "o", 2: "s", 3: "^", 4: "D",
+        5: "v", 6: "<", 7: ">", 8: "p",
+    }
+
+    for dsb_v in sorted(datos_por_dsb.keys()):
+        fig, ax = plt.subplots(figsize=figsize)
+        datos_dsb = datos_por_dsb[dsb_v]
+
+        for (iso, rep), puntos in sorted(datos_dsb.items()):
+            vel_list = [p[0] for p in puntos]
+            mu_list = [p[1] for p in puntos]
+
+            color = ISO_COLORES.get(iso, "#000000")
+            marcador = rep_marcadores.get(rep, "o") if rep is not None else "o"
+
+            if rep is not None:
+                label = f"ISO {iso}, REP {rep}"
+            else:
+                label = f"ISO {iso}"
+            ax.scatter(vel_list, mu_list, c=color, marker=marcador, s=100,
+                       alpha=0.7, label=label, edgecolors="black", linewidth=0.5)
+
+        ax.set_xlabel("Velocidad de rotacion (RPM)", fontsize=12)
+        ax.set_ylabel("Viscosidad promedio μ_prom (cSt)", fontsize=12)
+        ax.set_title(f"Viscosidad vs Velocidad de Rotacion (DSB {dsb_v})",
+                     fontsize=14, fontweight="bold")
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best", fontsize=10)
+
+        nombre_salida = f"viscosidad_scatter_dsb{dsb_v}.png"
+        ruta_salida = salida / nombre_salida
+        fig.savefig(ruta_salida, dpi=args.dpi, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  Grafico DSB {dsb_v} guardado: {ruta_salida}")
+
+    print(f"\nFilas leidas: {n_filas} | Puntos graficados: {n_validas}")
     return 0
 
 

@@ -72,11 +72,8 @@ los de tus aceites reales.
 
 ## Visualización de viscosidad (`graficar_viscosidad.py`)
 
-Crea un **scatter plot** que muestra la viscosidad promedio (`mu_prom`) en función
-de la velocidad de rotación, con codificación visual:
-
-* **Color** = tipo de aceite (ISO 32/46/68, diferentes colores)
-* **Forma de marcador** = nivel de desbalanceo (`dsb`: círculo / cuadrado / triángulo / etc.)
+Crea scatter plots que muestran la viscosidad promedio (`mu_prom`) en función
+de la velocidad de rotación:
 
 ```bash
 python graficar_viscosidad.py --entrada ensayos_mu.txt --salida ./graficos
@@ -85,4 +82,13 @@ python graficar_viscosidad.py --entrada ensayos_mu.txt --salida ./graficos
 
 Acepta los mismos separadores que `mu_temperatura.py` (`--sep tab` / `--sep auto`).
 
-El gráfico se guarda como `viscosidad_scatter.png` en la carpeta de salida.
+### Gráficos generados
+
+1. **`viscosidad_scatter.png`** — gráfico general
+   * **Color** = tipo de aceite (ISO 32/46/68)
+   * **Forma de marcador** = nivel de desbalanceo (`dsb`)
+
+2. **`viscosidad_scatter_dsb{N}.png`** — gráficos por desbalanceo (uno para cada valor de `dsb`)
+   * **Color** = tipo de aceite (ISO 32/46/68)
+   * **Forma de marcador** = repetición (`rep`: círculo / cuadrado / triángulo / etc.)
+   * Permite comparar las diferentes repeticiones dentro de cada condición de desbalanceo
