@@ -15,6 +15,10 @@ del ensayo.
 | `config.py` / `comun.py` | — | Constantes y utilidades compartidas |
 | `_generar_datos_prueba.py` | — | (opcional) genera `.xlsx` sintéticos para probar el pipeline |
 
+> **[`GUIA_RESULTADOS_P5.md`](GUIA_RESULTADOS_P5.md)** — referencia detallada de los
+> 51 archivos que produce el paso 5: qué contiene cada CSV columna por columna y
+> fila por fila, qué muestra cada figura, y qué archivo responde a cada pregunta.
+
 ---
 
 ## Ejecución
