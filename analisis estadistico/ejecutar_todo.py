@@ -7,6 +7,7 @@ Argumentos utiles:
     --modo-runout global      agrupamiento del vector de slow roll (paso 3)
     --desenvolver             fase continua en las graficas (pasos 2 y 4)
     --grupos-velocidad        ademas, ANOVA por tramos de rpm (paso 5)
+    --grupos-desbalanceo      ademas, ANOVA para cada desbalanceo por separado
     --desde 3                 reanuda a partir de un paso (no repite los previos)
 """
 
@@ -42,6 +43,7 @@ def main() -> int:
     p.add_argument("--respuesta", default="amp", choices=["amp", "fase"])
     p.add_argument("--desenvolver", action="store_true")
     p.add_argument("--grupos-velocidad", dest="grupos", action="store_true")
+    p.add_argument("--grupos-desbalanceo", dest="grupos_desb", action="store_true")
     p.add_argument("--desde", type=int, default=1, choices=[1, 2, 3, 4, 5])
     args = p.parse_args()
 
@@ -54,7 +56,8 @@ def main() -> int:
         (3, "p3_compensar_runout.py", sal + ["--modo", args.modo_runout]),
         (4, "p4_graficar_compensados.py", sal + desenv),
         (5, "p5_anova_split_plot.py", sal + ["--respuesta", args.respuesta]
-            + (["--grupos-velocidad"] if args.grupos else [])),
+            + (["--grupos-velocidad"] if args.grupos else [])
+            + (["--grupos-desbalanceo"] if args.grupos_desb else [])),
     ]
 
     for numero, script, argumentos in pasos:

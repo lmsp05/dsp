@@ -1,7 +1,8 @@
 # Guía de los resultados del paso 5 (`p5_estadistica`)
 
-Referencia de los 51 archivos que genera `p5_anova_split_plot.py --grupos-velocidad`:
-**25 CSV** (5 familias × 5 variantes) y **26 PNG** (5 familias × 5 variantes + 1 única).
+Referencia de los archivos que genera `p5_anova_split_plot.py`. Con
+`--grupos-velocidad` son 51 (**25 CSV** + **26 PNG**); añadiendo
+`--grupos-desbalanceo` son 82.
 
 ---
 
@@ -33,9 +34,42 @@ global lo promedia y lo esconde. Los tramos se editan en `GRUPOS_VELOCIDAD`.
 > contribución son relativas **al total de ese tramo** y no se comparan en valor
 > absoluto entre tramos.
 
-> **Aviso de comparaciones múltiples.** Los 5 análisis salen de los mismos datos y
-> los valores p **no** están corregidos por multiplicidad. Úsalos para describir en
-> qué régimen vive el efecto, no para acumular cinco pruebas independientes.
+> **Aviso de comparaciones múltiples.** Los análisis salen todos de los mismos
+> datos y los valores p **no** están corregidos por multiplicidad. Úsalos para
+> describir en qué régimen vive el efecto, no para acumular pruebas independientes.
+
+### Variantes `_Desbalanceo_N` (con `--grupos-desbalanceo`)
+
+```
+<familia>_Desbalanceo_1 / _2 / _3
+```
+
+Ojo, estas **no** son solo un subconjunto: al fijar el desbalanceo ese factor sale
+del modelo y el diseño se reduce de split-split-plot a **split-plot en bloques**
+(parcela grande = viscosidad, subparcela = velocidad). Consecuencias en los
+archivos:
+
+* `anova_split_plot_Desbalanceo_N.csv` tiene **24 filas** (4 sensores × **6**
+  fuentes), no 44. Las fuentes son: `Repeticion (bloque)`, `Viscosidad`,
+  `Error(a) = Rep x Visc` (4 gl), `Velocidad`, `Viscosidad x Velocidad`,
+  `Error(b) = residual` (84 gl). **No hay `Error(c)`.**
+* `anova_ingenuo_Desbalanceo_N.csv` tiene **16 filas** (4 sensores × 4: los 3
+  efectos + el residual agrupado de 90 gl).
+* `componentes_varianza_Desbalanceo_N.csv` tiene **8 filas** (4 sensores × **2**
+  estratos): `Parcela grande (montaje del aceite)` y
+  `Subparcela (barrido de velocidad)`.
+* `p5_interacciones_Desbalanceo_N.png` tiene **una sola fila** de paneles (la de
+  viscosidad × velocidad): con un solo desbalanceo, la fila de abajo sería un
+  punto por curva.
+* `comparacion_viscosidad_*` y `posthoc_viscosidad_*` mantienen su forma (4 y 12
+  filas), porque siguen hablando solo de la viscosidad.
+
+**La viscosidad se sigue contrastando con 4 gl.** Separar por desbalanceo no añade
+grados de libertad al aceite: los montajes de parcela grande siguen siendo 9.
+
+Y una figura extra sin variantes: **`p5_viscosidad_por_desbalanceo.png`**, con la
+misma estructura que `p5_viscosidad_por_grupo.png` pero comparando los tres niveles
+de desbalanceo.
 
 ---
 
@@ -272,7 +306,7 @@ para la conclusión, es esta.
 | ¿Entre qué aceites está la diferencia? | `posthoc_viscosidad.csv` |
 | ¿De qué tamaño es el efecto? | `posthoc_viscosidad.csv` (`Diferencia`, en µm) y `anova_split_plot.csv` (`omega2_%`) |
 | ¿En qué régimen de velocidad aparece? | `p5_viscosidad_por_grupo.png` y los `comparacion_viscosidad_Grupo_*.csv` |
-| ¿Depende del nivel de desbalanceo? | fila `Viscosidad x Desbalanceo` de `anova_split_plot.csv` |
+| ¿Depende del nivel de desbalanceo? | fila `Viscosidad x Desbalanceo` de `anova_split_plot.csv` (contraste formal) y `p5_viscosidad_por_desbalanceo.png` (lectura descriptiva) |
 | ¿Es repetible el banco? | `componentes_varianza.csv` / `p5_estratos_varianza.png` |
 | ¿Qué domina la variabilidad? | `p5_contribucion.png` |
 | ¿Por qué no puedo usar el ANOVA de antes? | `p5_ingenuo_vs_correcto.png` |

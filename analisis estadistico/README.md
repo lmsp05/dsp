@@ -341,6 +341,39 @@ velocidades**, y esta figura dice en qué régimen aparece.
 
 Los tramos se editan en `GRUPOS_VELOCIDAD`, al principio del script.
 
+### Análisis por nivel de desbalanceo
+
+Con `--grupos-desbalanceo` se repite todo el análisis **para cada desbalanceo por
+separado**, con sufijo `_Desbalanceo_1/2/3`, más la figura comparativa
+`p5_viscosidad_por_desbalanceo.png`.
+
+Aquí hay un cambio de modelo que conviene entender: al fijar el desbalanceo, **ese
+factor sale del modelo** y con él desaparece su estrato de error. El diseño deja de
+ser split-split-plot y se reduce a un **split-plot en bloques**:
+
+| | Diseño completo | Fijando un desbalanceo |
+|---|---|---|
+| bloque | repetición | repetición |
+| parcela grande | viscosidad | viscosidad |
+| subparcela | desbalanceo | **velocidad** |
+| sub-subparcela | velocidad | — |
+| Fuentes en la tabla | 11 | **6** |
+| Error(a) | Rep × Visc, 4 gl | Rep × Visc, **4 gl** |
+| Error(b) | Rep × Desb \| Visc, 12 gl | residual, 84 gl |
+| Error(c) | 252 gl | no existe |
+
+**La viscosidad sigue juzgándose con 4 gl.** Separar por desbalanceo no aporta
+información sobre el aceite, porque el número de montajes de parcela grande
+(3 bloques × 3 aceites = 9) es el mismo. Lo que se gana es poder decir si el efecto
+del aceite cambia según cuánto desbalanceo haya — que es justo lo que el término
+`Visc × Desb` del análisis completo contrasta formalmente.
+
+> Se validó igual que el diseño completo: los SS coinciden con `statsmodels`
+> (`y ~ C(Visc)*C(Vel)`) hasta ~1e-14, los gl suman n−1 = 134, y se cumplen dos
+> identidades que enlazan ambas implementaciones:
+> `Σ_d SS_Visc(en d) = SS_Visc + SS_Visc×Desb` y
+> `Σ_d SS_Error(a)(en d) = SS_Error(a) + SS_Rep×Visc×Desb` (12 gl = 4 + 8).
+
 > Hacer el análisis por tramos corrige de paso un sesgo de las figuras globales:
 > promediar la amplitud sobre las 15 velocidades queda dominado por la resonancia
 > (en los datos de prueba, 3 de las 15 velocidades aportan casi la mitad del

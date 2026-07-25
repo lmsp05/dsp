@@ -90,6 +90,8 @@ ETIQUETAS = {
     "Desbalanceo x Velocidad": "Desb×Vel",
     "Viscosidad x Desbalanceo x Velocidad": "Visc×Desb×Vel",
     "Error(c)": "Error(c)",
+    # diseno reducido (un solo desbalanceo): split-plot de dos estratos
+    "Error(b) = residual": "Error(b)",
 }
 
 
@@ -187,39 +189,77 @@ def anova_split_split_plot(Y):
 
     gl_total = sum(f[2] for f in filas)
     assert gl_total == Y.size - 1, f"gl inconsistentes: {gl_total} != {Y.size - 1}"
+    return _completar_tabla(filas, SS_tot)
 
+
+def anova_split_plot_bloques(Y):
+    """
+    Descomposicion de un SPLIT-PLOT en bloques (dos estratos de error).
+
+    Es el diseno que queda cuando se analiza UN SOLO nivel de desbalanceo: al
+    fijar el desbalanceo, ese factor y sus interacciones desaparecen del modelo
+    y con ellos el estrato de subparcela. Quedan:
+
+        bloque         -> repeticion  (r)
+        parcela grande -> viscosidad  (a)   contrastada con Error(a) = Rep x Visc
+        subparcela     -> velocidad   (c)   contrastada con Error(b) = residual
+
+    Y[i,j,l] con i=repeticion, j=viscosidad, l=velocidad; una observacion por
+    celda. La viscosidad sigue juzgandose con (r-1)(a-1) = 4 gl: fijar el
+    desbalanceo NO aumenta la informacion sobre el aceite, porque el numero de
+    montajes de parcela grande es el mismo.
+    """
+    r, a, c = Y.shape
+    mu = Y.mean()
+    m_i = Y.mean(axis=(1, 2))
+    m_j = Y.mean(axis=(0, 2))
+    m_l = Y.mean(axis=(0, 1))
+    m_ij = Y.mean(axis=2)
+    m_jl = Y.mean(axis=0)
+
+    SS_tot = float(((Y - mu) ** 2).sum())
+    SS_R = a * c * float(((m_i - mu) ** 2).sum())
+    SS_A = r * c * float(((m_j - mu) ** 2).sum())
+    SS_Ea = c * float(((m_ij - m_i[:, None] - m_j[None, :] + mu) ** 2).sum())
+    SS_C = r * a * float(((m_l - mu) ** 2).sum())
+    SS_AC = r * float(((m_jl - m_j[:, None] - m_l[None, :] + mu) ** 2).sum())
+    SS_Eb = SS_tot - (SS_R + SS_A + SS_Ea + SS_C + SS_AC)
+
+    filas = [
+        ("Repeticion (bloque)",      SS_R,  r - 1,                 "Error(a)"),
+        ("Viscosidad",               SS_A,  a - 1,                 "Error(a)"),
+        ("Error(a) = Rep x Visc",    SS_Ea, (r - 1) * (a - 1),     ""),
+        ("Velocidad",                SS_C,  c - 1,                 "Error(b)"),
+        ("Viscosidad x Velocidad",   SS_AC, (a - 1) * (c - 1),     "Error(b)"),
+        ("Error(b) = residual",      SS_Eb, a * (r - 1) * (c - 1), ""),
+    ]
+    gl_total = sum(f[2] for f in filas)
+    assert gl_total == Y.size - 1, f"gl inconsistentes: {gl_total} != {Y.size - 1}"
+    return _completar_tabla(filas, SS_tot)
+
+
+def _completar_tabla(filas, SS_tot):
+    """Anade MS, F, p, contribucion y omega2 a una lista de (fuente, SS, gl, error)."""
     tab = pd.DataFrame(filas, columns=["Fuente", "SS", "GL", "Error"])
     tab["MS"] = tab["SS"] / tab["GL"]
-    ms = dict(zip(["Error(a)", "Error(b)", "Error(c)"],
-                  [tab.loc[2, "MS"], tab.loc[5, "MS"], tab.loc[10, "MS"]]))
-    gl = dict(zip(["Error(a)", "Error(b)", "Error(c)"],
-                  [tab.loc[2, "GL"], tab.loc[5, "GL"], tab.loc[10, "GL"]]))
+    errores = {f.split(" =")[0].strip(): (ms, gl) for f, ms, gl, e
+               in zip(tab["Fuente"], tab["MS"], tab["GL"], tab["Error"]) if not e}
 
-    F, P, GLD = [], [], []
+    F, P, GLD, OM = [], [], [], []
     for _, fila in tab.iterrows():
         e = fila["Error"]
-        if not e or ms[e] <= 0:
-            F.append(np.nan), P.append(np.nan), GLD.append(np.nan)
+        if not e or e not in errores or errores[e][0] <= 0:
+            F.append(np.nan), P.append(np.nan), GLD.append(np.nan), OM.append(np.nan)
             continue
-        f = fila["MS"] / ms[e]
+        ms_e, gl_e = errores[e]
+        f = fila["MS"] / ms_e
         F.append(f)
-        P.append(float(stats.f.sf(f, fila["GL"], gl[e])))
-        GLD.append(gl[e])
-    tab["GL_denominador"] = GLD
-    tab["F"] = F
-    tab["p"] = P
+        P.append(float(stats.f.sf(f, fila["GL"], gl_e)))
+        GLD.append(gl_e)
+        OM.append(100.0 * max(fila["SS"] - fila["GL"] * ms_e, 0.0) / (SS_tot + ms_e))
+    tab["GL_denominador"], tab["F"], tab["p"] = GLD, F, P
     tab["Contribucion_SS_%"] = 100.0 * tab["SS"] / SS_tot
-
-    # omega^2: tamano de efecto usando el error de SU estrato.
-    om = []
-    for _, fila in tab.iterrows():
-        e = fila["Error"]
-        if not e:
-            om.append(np.nan)
-            continue
-        num = fila["SS"] - fila["GL"] * ms[e]
-        om.append(100.0 * max(num, 0.0) / (SS_tot + ms[e]))
-    tab["omega2_%"] = om
+    tab["omega2_%"] = OM
     return tab
 
 
@@ -227,27 +267,25 @@ def anova_ingenuo(tab):
     """
     Reproduce el ANOVA factorial corriente (el de `f3_s1_v1.py`): ignora los
     bloques y contrasta TODO contra un unico residual, que resulta de juntar
-    los tres estratos de error mas el bloque.
+    todos los estratos de error mas el bloque.
+
+    Funciona con cualquiera de los dos disenos: identifica los estratos de error
+    como las filas sin termino de error asignado.
 
     Sirve unicamente para cuantificar cuanto se infla la significancia.
     """
-    idx = {f: i for i, f in enumerate(tab["Fuente"])}
-    ss_res = float(tab.loc[[idx["Repeticion (bloque)"], idx["Error(a) = Rep x Visc"],
-                            idx["Error(b) = Rep x Desb | Visc"], idx["Error(c)"]],
-                           "SS"].sum())
-    gl_res = int(tab.loc[[idx["Repeticion (bloque)"], idx["Error(a) = Rep x Visc"],
-                          idx["Error(b) = Rep x Desb | Visc"], idx["Error(c)"]],
-                         "GL"].sum())
+    es_error = tab["Error"].fillna("") == ""
+    es_bloque = tab["Fuente"] == "Repeticion (bloque)"
+    agrupadas = es_error | es_bloque
+
+    ss_res = float(tab.loc[agrupadas, "SS"].sum())
+    gl_res = int(tab.loc[agrupadas, "GL"].sum())
     ms_res = ss_res / gl_res
 
-    fuentes = ["Viscosidad", "Desbalanceo", "Viscosidad x Desbalanceo", "Velocidad",
-               "Viscosidad x Velocidad", "Desbalanceo x Velocidad",
-               "Viscosidad x Desbalanceo x Velocidad"]
     filas = []
-    for f in fuentes:
-        fila = tab.loc[idx[f]]
+    for _, fila in tab.loc[~agrupadas].iterrows():
         F = fila["MS"] / ms_res
-        filas.append({"Fuente": f, "SS": fila["SS"], "GL": fila["GL"],
+        filas.append({"Fuente": fila["Fuente"], "SS": fila["SS"], "GL": fila["GL"],
                       "MS": fila["MS"], "GL_denominador": gl_res, "F": F,
                       "p": float(stats.f.sf(F, fila["GL"], gl_res))})
     filas.append({"Fuente": "Residual (agrupado)", "SS": ss_res, "GL": gl_res,
@@ -255,42 +293,60 @@ def anova_ingenuo(tab):
     return pd.DataFrame(filas)
 
 
-def componentes_varianza(tab, r, a, b, c):
+def componentes_varianza(tab, forma):
     """
     Varianza atribuible a cada estrato de aleatorizacion (metodo de los momentos
-    sobre los cuadrados medios esperados). Cuantifica cuanta variabilidad
-    aporta el montaje de parcela grande frente al ruido de repeticion rapida.
+    sobre los cuadrados medios esperados).
+
+    `forma` = (r, a, b, c) en el diseno completo o (r, a, c) cuando se analiza un
+    solo desbalanceo. El divisor de cada estrato es el numero de observaciones
+    que hay bajo el, es decir el producto de los niveles de los factores anidados
+    por debajo.
     """
     idx = {f: i for i, f in enumerate(tab["Fuente"])}
-    ms_a = tab.loc[idx["Error(a) = Rep x Visc"], "MS"]
-    ms_b = tab.loc[idx["Error(b) = Rep x Desb | Visc"], "MS"]
-    ms_c = tab.loc[idx["Error(c)"], "MS"]
-    v_a = max((ms_a - ms_b) / (b * c), 0.0)
-    v_b = max((ms_b - ms_c) / c, 0.0)
-    v_c = max(ms_c, 0.0)
-    tot = v_a + v_b + v_c or 1.0
+    if len(forma) == 4:
+        r, a, b, c = forma
+        estratos = [("Error(a) = Rep x Visc", "Parcela grande (montaje del aceite)", b * c),
+                    ("Error(b) = Rep x Desb | Visc", "Subparcela (montaje del desbalanceo)", c),
+                    ("Error(c)", "Sub-subparcela (barrido de velocidad)", 1)]
+    else:
+        r, a, c = forma
+        estratos = [("Error(a) = Rep x Visc", "Parcela grande (montaje del aceite)", c),
+                    ("Error(b) = residual", "Subparcela (barrido de velocidad)", 1)]
+
+    ms = [tab.loc[idx[f], "MS"] for f, _, _ in estratos]
+    var = []
+    for k in range(len(estratos)):
+        if k < len(estratos) - 1:
+            var.append(max((ms[k] - ms[k + 1]) / estratos[k][2], 0.0))
+        else:
+            var.append(max(ms[k], 0.0))
+    tot = sum(var) or 1.0
     return pd.DataFrame([
-        {"Estrato": "Parcela grande (montaje del aceite)", "MS": ms_a,
-         "Varianza": v_a, "Porcentaje": 100 * v_a / tot},
-        {"Estrato": "Subparcela (montaje del desbalanceo)", "MS": ms_b,
-         "Varianza": v_b, "Porcentaje": 100 * v_b / tot},
-        {"Estrato": "Sub-subparcela (barrido de velocidad)", "MS": ms_c,
-         "Varianza": v_c, "Porcentaje": 100 * v_c / tot},
-    ])
+        {"Estrato": nombre, "MS": ms[k], "Varianza": var[k],
+         "Porcentaje": 100 * var[k] / tot}
+        for k, (_, nombre, _) in enumerate(estratos)])
 
 
 def tukey_viscosidad(Y, tab, viscs, alfa=0.05):
     """
     Comparaciones entre aceites con el termino de error CORRECTO (Error(a)).
 
-    HSD = q(alfa, a, gl_Ea) * sqrt(MS_Ea / n_por_media), con n_por_media = r*b*c.
+    HSD = q(alfa, a, gl_Ea) * sqrt(MS_Ea / n_por_media). `n_por_media` es el
+    numero de observaciones que hay detras de la media de cada aceite: r*b*c en
+    el diseno completo, r*c cuando se analiza un solo desbalanceo.
     """
-    r, a, b, c = Y.shape
+    if Y.ndim == 4:
+        r, a, b, c = Y.shape
+        n = r * b * c
+        medias = Y.mean(axis=(0, 2, 3))
+    else:
+        r, a, c = Y.shape
+        n = r * c
+        medias = Y.mean(axis=(0, 2))
     idx = {f: i for i, f in enumerate(tab["Fuente"])}
     ms_e = tab.loc[idx["Error(a) = Rep x Visc"], "MS"]
     gl_e = tab.loc[idx["Error(a) = Rep x Visc"], "GL"]
-    n = r * b * c
-    medias = Y.mean(axis=(0, 2, 3))
     q = float(stats.studentized_range.ppf(1 - alfa, a, gl_e))
     hsd = q * np.sqrt(ms_e / n)
 
@@ -321,8 +377,11 @@ def _fmt_p(p):
 
 def fig_contribucion(tablas, ruta, extra=""):
     """Contribucion de cada fuente a la suma de cuadrados, por sensor."""
-    fuentes = [f for f in ETIQUETAS if f != "Repeticion (bloque)"]
-    etiquetas = [ETIQUETAS[f] for f in fuentes]
+    # Las fuentes se leen de la propia tabla: asi la figura vale igual para el
+    # diseno completo (11 fuentes) y para el reducido de un solo desbalanceo (6).
+    fuentes = [f for f in tablas[config.SENSORES[0]]["Fuente"]
+               if f != "Repeticion (bloque)"]
+    etiquetas = [ETIQUETAS.get(f, f) for f in fuentes]
     colores = ["#c0392b" if f == "Viscosidad" else
                ("#7f8c8d" if f.startswith("Error") else "#2980b9") for f in fuentes]
 
@@ -344,7 +403,9 @@ def fig_contribucion(tablas, ruta, extra=""):
         ax.set_xticks(range(len(fuentes)))
         ax.set_xticklabels(etiquetas, rotation=45, ha="right", fontsize=9)
         ax.grid(axis="y", linestyle="--", alpha=0.4)
-    fig.suptitle(f"Descomposicion de la variabilidad — split-split-plot{extra}\n"
+    # El diseno se reconoce por la presencia del tercer estrato de error.
+    diseno = "split-split-plot" if "Error(c)" in fuentes else "split-plot"
+    fig.suptitle(f"Descomposicion de la variabilidad — {diseno}{extra}\n"
                  "(* = significativo al 5 % con SU termino de error; "
                  "gris = estratos de error)",
                  fontsize=14, fontweight="bold")
@@ -354,10 +415,9 @@ def fig_contribucion(tablas, ruta, extra=""):
 
 def fig_comparacion(tablas, ingenuos, ruta, extra=""):
     """Lo que cambia al respetar el diseno: F y p de cada efecto, ambos modelos."""
-    fuentes = ["Viscosidad", "Desbalanceo", "Viscosidad x Desbalanceo", "Velocidad",
-               "Viscosidad x Velocidad", "Desbalanceo x Velocidad",
-               "Viscosidad x Desbalanceo x Velocidad"]
-    et = [ETIQUETAS[f] for f in fuentes]
+    fuentes = [f for f in ingenuos[config.SENSORES[0]]["Fuente"]
+               if f != "Residual (agrupado)"]
+    et = [ETIQUETAS.get(f, f) for f in fuentes]
     x = np.arange(len(fuentes))
 
     fig, axes = plt.subplots(2, 2, figsize=(16, 9), constrained_layout=True)
@@ -417,7 +477,12 @@ def fig_efecto_viscosidad(resultados, viscs, ruta, unidad, extra=""):
 def fig_interacciones(df, respuestas, viscs, desbs, vels, ruta, unidad, extra=""):
     """Interaccion viscosidad x velocidad (arriba) y viscosidad x desbalanceo."""
     x = np.arange(len(vels))
-    fig, axes = plt.subplots(2, 4, figsize=(18, 8.5), constrained_layout=True)
+    # Con un solo desbalanceo la fila viscosidad x desbalanceo seria un unico
+    # punto por curva: no se dibuja.
+    dos_filas = len(desbs) >= 2
+    fig, axes = plt.subplots(2 if dos_filas else 1, 4,
+                             figsize=(18, 8.5 if dos_filas else 4.8),
+                             constrained_layout=True, squeeze=False)
     for j, sensor in enumerate(config.SENSORES):
         col = respuestas[sensor]
         ax = axes[0, j]
@@ -435,6 +500,8 @@ def fig_interacciones(df, respuestas, viscs, desbs, vels, ruta, unidad, extra=""
             ax.legend(fontsize=8)
         ax.set_xlabel("rpm", fontsize=9)
 
+        if not dos_filas:
+            continue
         ax = axes[1, j]
         for v in viscs:
             m = df[df["Viscosidad"] == v].groupby("Desbalanceo")[col].mean()
@@ -447,18 +514,19 @@ def fig_interacciones(df, respuestas, viscs, desbs, vels, ruta, unidad, extra=""
             ax.set_ylabel(f"media {unidad}")
         ax.set_xlabel("desbalanceo", fontsize=9)
     n_rep = len(df["Repeticion"].unique())
-    fig.suptitle(
-        f"Interacciones{extra}\n"
-        f"arriba: viscosidad x velocidad — cada punto promedia "
-        f"{n_rep} rep x {len(desbs)} desbalanceos = {n_rep * len(desbs)} valores   |   "
-        f"abajo: viscosidad x desbalanceo — cada punto promedia "
-        f"{n_rep} rep x {len(vels)} velocidades = {n_rep * len(vels)} valores",
-        fontsize=12, fontweight="bold")
+    titulo = (f"Interacciones{extra}\n"
+              f"viscosidad x velocidad — cada punto promedia {n_rep} rep x "
+              f"{len(desbs)} desbalanceo(s) = {n_rep * len(desbs)} valores")
+    if dos_filas:
+        titulo += (f"   |   abajo: viscosidad x desbalanceo — cada punto promedia "
+                   f"{n_rep} rep x {len(vels)} velocidades = "
+                   f"{n_rep * len(vels)} valores")
+    fig.suptitle(titulo, fontsize=12, fontweight="bold")
     fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
     plt.close(fig)
 
 
-def fig_viscosidad_por_grupo(resumen, viscs, ruta, unidad):
+def fig_viscosidad_por_grupo(resumen, viscs, ruta, unidad, que="tramo de velocidad"):
     """
     Como cambia el efecto de la viscosidad al recorrer los tramos de velocidad.
 
@@ -498,9 +566,9 @@ def fig_viscosidad_por_grupo(resumen, viscs, ruta, unidad):
         ax.grid(axis="y", alpha=0.3, ls="--")
         if j == 0:
             ax.set_ylabel("evidencia  -log10(p)")
-    fig.suptitle("Efecto de la viscosidad tramo a tramo de velocidad\n"
-                 "arriba: media por aceite en cada tramo · abajo: evidencia del "
-                 "efecto (verde = significativo al 5 %)",
+    fig.suptitle(f"Efecto de la viscosidad segun el {que}\n"
+                 f"arriba: media por aceite en cada nivel · abajo: evidencia del "
+                 f"efecto (verde = significativo al 5 %)",
                  fontsize=14, fontweight="bold")
     fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
     plt.close(fig)
@@ -512,7 +580,8 @@ def fig_estratos(comps, ruta, extra=""):
     estratos = comps[config.SENSORES[0]]["Estrato"].tolist()
     x = np.arange(len(config.SENSORES))
     abajo = np.zeros(len(config.SENSORES))
-    colores = ["#8e44ad", "#2980b9", "#95a5a6"]
+    colores = (["#8e44ad", "#2980b9", "#95a5a6"] if len(estratos) == 3
+               else ["#8e44ad", "#95a5a6"])
     for i, e in enumerate(estratos):
         v = np.array([comps[s].iloc[i]["Porcentaje"] for s in config.SENSORES])
         ax.bar(x, v, 0.55, bottom=abajo, label=e, color=colores[i],
@@ -540,10 +609,12 @@ def validar_diseno(reps, viscs, desbs, vels):
     error. Sin al menos 2 repeticiones no hay Error(a) ni Error(b) y el analisis
     de parcelas subdivididas es imposible.
     """
+    # El desbalanceo puede tener un solo nivel: en ese caso sale del modelo y el
+    # diseno se reduce a un split-plot de dos estratos (ver anova_split_plot_bloques).
     problemas = []
     for nombre, niveles, minimo in (("repeticiones (bloques)", reps, 2),
                                     ("viscosidades", viscs, 2),
-                                    ("desbalanceos", desbs, 2),
+                                    ("desbalanceos", desbs, 1),
                                     ("velocidades", vels, 2)):
         if len(niveles) < minimo:
             problemas.append(f"{len(niveles)} {nombre} (hacen falta >= {minimo})")
@@ -564,13 +635,21 @@ def analizar(df, respuestas, unidad, destino: Path, sufijo: str = "",
     vels = sorted(df["Velocidad"].unique())
     validar_diseno(reps, viscs, desbs, vels)
 
+    # Con >= 2 desbalanceos el diseno es split-split-plot; con uno solo el factor
+    # desaparece y queda un split-plot de dos estratos.
+    completo = len(desbs) >= 2
+
     tablas, ingenuos, comps, resultados, posthoc = {}, {}, {}, {}, []
     for sensor in config.SENSORES:
         Y = _tensor(df, respuestas[sensor], reps, viscs, desbs, vels)
-        tab = anova_split_split_plot(Y)
+        if completo:
+            tab = anova_split_split_plot(Y)
+        else:
+            Y = Y[:, :, 0, :]
+            tab = anova_split_plot_bloques(Y)
         tablas[sensor] = tab
         ingenuos[sensor] = anova_ingenuo(tab)
-        comps[sensor] = componentes_varianza(tab, *Y.shape)
+        comps[sensor] = componentes_varianza(tab, Y.shape)
         ph, medias, ms_e, gl_e, n = tukey_viscosidad(Y, tab, viscs)
         ph.insert(0, "Sensor", sensor)
         posthoc.append(ph)
@@ -636,6 +715,9 @@ def main() -> int:
                    help="Magnitud analizada (def: amp)")
     p.add_argument("--grupos-velocidad", dest="grupos", action="store_true",
                    help="Repite el analisis dentro de cada tramo de velocidad")
+    p.add_argument("--grupos-desbalanceo", dest="grupos_desb", action="store_true",
+                   help="Repite el analisis para cada nivel de desbalanceo por "
+                        "separado (el diseno se reduce a un split-plot)")
     args = p.parse_args()
 
     salida = Path(args.salida).expanduser()
@@ -729,6 +811,39 @@ def main() -> int:
                 resumen, viscs, destino / "p5_viscosidad_por_grupo.png", unidad)
             print(f"\n  Figura comparativa entre tramos: "
                   f"{destino / 'p5_viscosidad_por_grupo.png'}")
+
+    # ---- opcional: cada desbalanceo por separado ----
+    if args.grupos_desb:
+        print("\n" + "=" * 78)
+        print("ANALISIS POR NIVEL DE DESBALANCEO")
+        print("=" * 78)
+        print("Al fijar el desbalanceo, ese factor sale del modelo: el diseno pasa\n"
+              "de split-split-plot a split-plot (bloque -> viscosidad -> velocidad).\n"
+              "La viscosidad sigue contrastandose con Error(a) = Rep x Visc y 4 gl:\n"
+              "separar por desbalanceo NO aporta grados de libertad al aceite.\n")
+        resumen_d = []
+        for d in sorted(df["Desbalanceo"].unique()):
+            sub = df[df["Desbalanceo"] == d]
+            nombre = f"Desbalanceo_{int(d)}"
+            try:
+                _, _, cmp_d, _, _, medias_d = analizar(
+                    sub, respuestas, unidad, destino, nombre)
+            except ValueError as e:
+                print(f"  {nombre}: {e}")
+                continue
+            sig = (cmp_d["significativa_correcto"] == "SI").sum()
+            print(f"  {nombre}: viscosidad significativa en {sig}/4 sensores  "
+                  f"(p min = {cmp_d['p_correcto'].min():.4g})")
+            resumen_d.append((nombre, medias_d,
+                              dict(zip(cmp_d["Sensor"], cmp_d["p_correcto"]))))
+
+        if len(resumen_d) >= 2:
+            viscs = sorted(df["Viscosidad"].unique())
+            fig_viscosidad_por_grupo(
+                resumen_d, viscs, destino / "p5_viscosidad_por_desbalanceo.png",
+                unidad, que="nivel de desbalanceo")
+            print(f"\n  Figura comparativa entre desbalanceos: "
+                  f"{destino / 'p5_viscosidad_por_desbalanceo.png'}")
 
     print(f"\nResultados en: {destino}")
     return 0
