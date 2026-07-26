@@ -845,7 +845,20 @@ def main() -> int:
             print(f"\n  Figura comparativa entre desbalanceos: "
                   f"{destino / 'p5_viscosidad_por_desbalanceo.png'}")
 
-    print(f"\nResultados en: {destino}")
+    # ---- resumen de lo que se ha hecho y de lo que no ----
+    print("\n" + "=" * 78)
+    print("ANALISIS OPCIONALES")
+    print("=" * 78)
+    for activo, etiqueta, bandera in (
+            (args.grupos, "por tramos de velocidad", "--grupos-velocidad"),
+            (args.grupos_desb, "por nivel de desbalanceo", "--grupos-desbalanceo")):
+        if activo:
+            print(f"  [x] {etiqueta:26s} ejecutado")
+        else:
+            print(f"  [ ] {etiqueta:26s} NO ejecutado — anade {bandera}")
+
+    n = len(list(destino.glob("*")))
+    print(f"\n{n} archivos en: {destino}")
     return 0
 
 
