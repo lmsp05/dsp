@@ -413,23 +413,27 @@ directamente a "¿es la viscosidad un factor relevante?".
 ```bat
 python "%A%\p6_graficar_pvalores.py" --salida "%R%"
 python "%A%\p6_graficar_pvalores.py" --salida "%R%" --alfa 0.01
+python "%A%\p6_graficar_pvalores.py" --salida "%R%" --ymax 0.1
 ```
 
 No recalcula nada: lee los `anova_split_plot*.csv` que ya escribió el paso 5 y
 detecta solas las variantes que existan (global, tramos de velocidad, niveles de
 desbalanceo).
 
-* **Altura de la barra** = evidencia. Más alta = más significativa.
-* **Rótulos del eje Y** = el valor p (1, 0.05, 0.01, 0.001, 1e-10, 1e-100).
-* **Número sobre cada barra** = el valor p exacto de ese factor.
+* **Eje Y** = el valor p en **escala lineal normal**, de 0 a 1 (el rango natural
+  de una probabilidad). La altura de la barra **es** el valor p, sin transformar.
+* **Barra por debajo de la línea roja → factor significativo.** Cuanto más baja
+  la barra, más fuerte la evidencia.
+* **Número sobre cada barra** = el valor p exacto.
 * **Línea roja discontinua** = el umbral (`--alfa`, 0.05 por defecto).
 * **Verde** = significativo · **gris** = no. La barra de `Visc` va resaltada.
 
-> **Por qué el eje no es lineal.** Los p van de ~0.007 a 1e-300; en un eje lineal
-> las barras que rondan 0.05 —las únicas que hay que juzgar— serían invisibles.
-> La geometría es `−log10(p)` en escala symlog (lineal hasta p ≈ 0.001 y
-> comprimida por encima), pero **las marcas del eje están rotuladas en valor p**,
-> así que se lee en p aunque la escala los comprima.
+> **`--ymax` para acercarte al umbral.** Con el eje completo (0 a 1) todas las
+> barras significativas quedan pegadas al suelo: se ve claramente que están por
+> debajo de la línea, pero no se distinguen entre sí. `--ymax 0.1` acota el eje a
+> la zona que importa; las barras que sobresalen se recortan y se marcan con una
+> flecha. En cualquier caso, el número escrito sobre cada barra da siempre el
+> valor exacto.
 
 Salidas en `p5_estadistica`:
 
