@@ -1,5 +1,5 @@
 """
-Ejecuta los pasos 1 a 5 en orden, cada uno con sus argumentos por defecto.
+Ejecuta los pasos 1 a 6 en orden, cada uno con sus argumentos por defecto.
 
     python ejecutar_todo.py --entrada <carpeta_xlsx> --salida <carpeta_resultados>
 
@@ -8,6 +8,7 @@ Argumentos utiles:
     --desenvolver             fase continua en las graficas (pasos 2 y 4)
     --grupos-velocidad        ademas, ANOVA por tramos de rpm (paso 5)
     --grupos-desbalanceo      ademas, ANOVA para cada desbalanceo por separado
+    --alfa 0.01               umbral de significancia (paso 6)
     --desde 3                 reanuda a partir de un paso (no repite los previos)
 """
 
@@ -34,7 +35,7 @@ def correr(script: str, argumentos: list[str]) -> int:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Ejecuta los pasos 1..5 del analisis.")
+    p = argparse.ArgumentParser(description="Ejecuta los pasos 1..6 del analisis.")
     p.add_argument("--entrada", default=config.DIR_EXCEL, help="Carpeta con los .xlsx")
     p.add_argument("--salida", default=config.DIR_RESULTADOS, help="Carpeta de resultados")
     p.add_argument("--tipo", default="p", choices=["p", "ac"])
@@ -44,7 +45,9 @@ def main() -> int:
     p.add_argument("--desenvolver", action="store_true")
     p.add_argument("--grupos-velocidad", dest="grupos", action="store_true")
     p.add_argument("--grupos-desbalanceo", dest="grupos_desb", action="store_true")
-    p.add_argument("--desde", type=int, default=1, choices=[1, 2, 3, 4, 5])
+    p.add_argument("--alfa", type=float, default=0.05,
+                   help="Umbral de significancia de las graficas del paso 6")
+    p.add_argument("--desde", type=int, default=1, choices=[1, 2, 3, 4, 5, 6])
     args = p.parse_args()
 
     sal = ["--salida", args.salida]
@@ -58,6 +61,7 @@ def main() -> int:
         (5, "p5_anova_split_plot.py", sal + ["--respuesta", args.respuesta]
             + (["--grupos-velocidad"] if args.grupos else [])
             + (["--grupos-desbalanceo"] if args.grupos_desb else [])),
+        (6, "p6_graficar_pvalores.py", sal + ["--alfa", str(args.alfa)]),
     ]
 
     for numero, script, argumentos in pasos:

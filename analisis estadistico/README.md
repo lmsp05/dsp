@@ -11,7 +11,8 @@ del ensayo.
 | `p3_compensar_runout.py` | 3 | Resta vectorial del fasor de slow roll |
 | `p4_graficar_compensados.py` | 4 | Las mismas 12 figuras con los datos ya compensados |
 | `p5_anova_split_plot.py` | 5 | ANOVA de parcelas subdivididas + comparación con el análisis ingenuo |
-| `ejecutar_todo.py` | — | Ejecuta los 5 pasos en orden |
+| `p6_graficar_pvalores.py` | 6 | Gráficas del **valor p** de cada factor, con el umbral de significancia |
+| `ejecutar_todo.py` | — | Ejecuta los 6 pasos en orden |
 | `config.py` / `comun.py` | — | Constantes y utilidades compartidas |
 | `_generar_datos_prueba.py` | — | (opcional) genera `.xlsx` sintéticos para probar el pipeline |
 
@@ -31,7 +32,7 @@ REM todo el proceso de una vez
 python "C:\Users\Owner\Documents\git\psd\dsp\analisis estadistico\ejecutar_todo.py" ^
        --entrada "C:\Users\Owner\Documents\BD\All data" ^
        --salida  "C:\Users\Owner\Documents\BD\resultados_analisis" ^
-       --desenvolver --grupos-velocidad
+       --desenvolver --grupos-velocidad --grupos-desbalanceo
 ```
 
 Paso a paso:
@@ -44,7 +45,8 @@ python "%A%\p1_extraer_fasores.py"      --entrada "C:\Users\Owner\Documents\BD\A
 python "%A%\p2_graficar_fasores.py"     --salida "%R%" --desenvolver
 python "%A%\p3_compensar_runout.py"     --salida "%R%" --modo viscosidad
 python "%A%\p4_graficar_compensados.py" --salida "%R%" --desenvolver
-python "%A%\p5_anova_split_plot.py"     --salida "%R%" --grupos-velocidad
+python "%A%\p5_anova_split_plot.py"     --salida "%R%" --grupos-velocidad --grupos-desbalanceo
+python "%A%\p6_graficar_pvalores.py"   --salida "%R%"
 ```
 
 Los valores por defecto de `--entrada` y `--salida` se editan en `config.py`.
@@ -398,3 +400,45 @@ Por defecto analiza los datos **compensados** (`p3_fasores_compensados.txt`); co
   ganar potencia habría que aumentar el número de **repeticiones completas**
   (bloques), que es lo que alimenta Error(a) — no más velocidades ni más
   desbalanceos.
+
+
+---
+
+## Paso 6 — Gráficas de valor p (`p6_graficar_pvalores.py`)
+
+Mismo reparto 2×2 por sensor que `p5_contribucion.png`, pero con el **valor p**
+en el eje Y en lugar de la contribución a la suma de cuadrados. Responde
+directamente a "¿es la viscosidad un factor relevante?".
+
+```bat
+python "%A%\p6_graficar_pvalores.py" --salida "%R%"
+python "%A%\p6_graficar_pvalores.py" --salida "%R%" --alfa 0.01
+```
+
+No recalcula nada: lee los `anova_split_plot*.csv` que ya escribió el paso 5 y
+detecta solas las variantes que existan (global, tramos de velocidad, niveles de
+desbalanceo).
+
+* **Altura de la barra** = evidencia. Más alta = más significativa.
+* **Rótulos del eje Y** = el valor p (1, 0.05, 0.01, 0.001, 1e-10, 1e-100).
+* **Número sobre cada barra** = el valor p exacto de ese factor.
+* **Línea roja discontinua** = el umbral (`--alfa`, 0.05 por defecto).
+* **Verde** = significativo · **gris** = no. La barra de `Visc` va resaltada.
+
+> **Por qué el eje no es lineal.** Los p van de ~0.007 a 1e-300; en un eje lineal
+> las barras que rondan 0.05 —las únicas que hay que juzgar— serían invisibles.
+> La geometría es `−log10(p)` en escala symlog (lineal hasta p ≈ 0.001 y
+> comprimida por encima), pero **las marcas del eje están rotuladas en valor p**,
+> así que se lee en p aunque la escala los comprima.
+
+Salidas en `p5_estadistica`:
+
+| Archivo | Contenido |
+|---|---|
+| `p6_pvalores.png` | todos los factores, análisis global |
+| `p6_pvalores_<variante>.png` | ídem para cada tramo de velocidad y cada desbalanceo |
+| `p6_pvalores_viscosidad.png` | **el resumen**: el p de la viscosidad en todas las variantes, por sensor |
+| `p6_pvalores.csv` | los mismos números en tabla, con la marca `Significativa` |
+
+Por consola imprime además una tabla `análisis × sensor` con el p de la
+viscosidad y el recuento de casos significativos.
