@@ -423,7 +423,15 @@ desbalanceo).
 * **Eje Y** = el valor p en **escala lineal normal**, de 0 a 1 (el rango natural
   de una probabilidad). La altura de la barra **es** el valor p, sin transformar.
 * **Barra por debajo de la línea roja → factor significativo.** Cuanto más baja
-  la barra, más fuerte la evidencia.
+  la barra, más fuerte la evidencia. La zona significativa va sombreada en verde
+  y explicada en la leyenda.
+
+> **Cuidado con el sentido de la escala.** `p < 0.05` significa que el factor
+> **sí** influye: el valor p es la probabilidad de observar estos datos *si el
+> factor no tuviera ningún efecto*, así que un p pequeño es evidencia fuerte.
+> Es lo contrario de lo que sugiere la intuición de "barra grande = importante".
+> Coincide con las marcas de `p5_contribucion.png`: `*` ↔ barra dentro de la
+> banda verde, `ns` ↔ barra por encima de la línea.
 * **Número sobre cada barra** = el valor p exacto.
 * **Línea roja discontinua** = el umbral (`--alfa`, 0.05 por defecto).
 * **Verde** = significativo · **gris** = no. La barra de `Visc` va resaltada.

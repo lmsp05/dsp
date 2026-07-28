@@ -61,6 +61,8 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+from matplotlib.lines import Line2D
 
 import config
 from p5_anova_split_plot import ETIQUETAS
@@ -87,6 +89,23 @@ def fmt_p(p):
     if p >= 1e-3:
         return f"{p:.3g}"
     return f"{p:.0e}"
+
+
+def _leyenda(fig, alfa):
+    """
+    Leyenda comun. Va fuera de los paneles: dentro chocaria con las etiquetas
+    de las barras, y el sentido de la escala (p pequeno = significativo) es
+    justo lo que no puede quedar ambiguo.
+    """
+    fig.legend(handles=[
+        Patch(facecolor=COLOR_SIG, edgecolor="#555555",
+              label=f"SIGNIFICATIVO — el factor SI influye (p < {alfa:g})"),
+        Patch(facecolor=COLOR_NO_SIG, edgecolor="#555555",
+              label=f"no significativo — sin evidencia de efecto (p ≥ {alfa:g})"),
+        Line2D([0], [0], color=COLOR_UMBRAL, ls="--", lw=1.8,
+               label=f"umbral p = {alfa:g}"),
+    ], loc="lower center", ncol=3, frameon=False, fontsize=10,
+        bbox_to_anchor=(0.5, -0.035))
 
 
 def _barras(ax, etiquetas, ps, alfa, ymax, resaltar=None):
@@ -124,12 +143,17 @@ def _barras(ax, etiquetas, ps, alfa, ymax, resaltar=None):
 
     # Eje lineal normal, en unidades de valor p.
     ax.set_ylim(0, ymax)
+
+    # Banda sombreada por DEBAJO del umbral: es la zona en la que un factor SI
+    # es significativo. Se marca explicitamente porque al pasar de la escala
+    # -log10(p) a la escala lineal en p la lectura se invierte (antes mas alto
+    # era mas significativo; ahora es al reves) y se presta a confusion.
+    ax.axhspan(0, alfa, color=COLOR_SIG, alpha=0.10, zorder=0)
     ax.axhline(alfa, color=COLOR_UMBRAL, ls="--", lw=1.8, zorder=3)
-    # La etiqueta va DENTRO del panel; al borde derecho se recortaria.
     ax.text(0.995, alfa + 0.012 * ymax, f"umbral p = {alfa:g}",
             transform=ax.get_yaxis_transform(), ha="right", va="bottom",
             fontsize=8.5, color=COLOR_UMBRAL, fontweight="bold", zorder=5,
-            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.75))
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.8))
     ax.grid(axis="y", ls="--", alpha=0.35)
 
 
@@ -154,9 +178,10 @@ def figura_variante(tab, ruta, alfa, etiqueta, ymax):
 
     fig.suptitle(
         f"Significancia de cada factor — {etiqueta}\n"
-        f"eje lineal en valor p · barra POR DEBAJO de la linea roja "
-        f"(p = {alfa}) = factor significativo",
+        f"cuanto MAS PEQUENO el valor p, MAS fuerte la evidencia de que el "
+        f"factor influye",
         fontsize=14, fontweight="bold")
+    _leyenda(fig, alfa)
     fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
     plt.close(fig)
 
@@ -181,8 +206,9 @@ def figura_viscosidad(resumen, ruta, alfa, ymax):
     fig.suptitle(
         f"¿Es la viscosidad un factor relevante? — valor p en cada analisis\n"
         f"significativa en {n_sig} de {n_tot} casos (sensor x analisis) · "
-        f"barra por debajo de la linea roja (p = {alfa}) = significativa",
+        f"barra dentro de la banda verde = la viscosidad SI influye",
         fontsize=14, fontweight="bold")
+    _leyenda(fig, alfa)
     fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
     plt.close(fig)
 
