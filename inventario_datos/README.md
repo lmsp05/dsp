@@ -94,7 +94,7 @@ verificar que el script detecta los cuatro casos.
 | Resumen | Archivos, peso total, combinaciones encontradas / faltantes / repetidas, outliers y cobertura. |
 | 1. Tabla de archivos | Un renglón por archivo: etiqueta, `rep`, `iso`, `dsb`, `rpm`, `cant`, peso en MB, estado y ruta. |
 | 2. Combinaciones repetidas | Las que aparecen más de una vez, con su etiqueta `_cantN` y los archivos implicados. |
-| 3. Combinaciones faltantes | Lista completa y resumen por condición `rep_iso_dsb`. |
+| 3. Estado por condición | Tabla principal de faltantes: una fila por cada condición `rep_iso_dsb`, más el detalle plano de las combinaciones no disponibles. |
 | 4. Outliers por tamaño | Estadísticos de cada grupo de comparación y detalle de cada archivo atípico. |
 | 5. Fuera de catálogo | Archivos con algún parámetro que no está en las listas válidas. |
 | 6. Avisos | Carpetas ignoradas, carpetas vacías y archivos sin RPM en el nombre. |
@@ -118,11 +118,52 @@ rep2_iso32_dsb1_rpm4000_cant3     3    0.983  rep2_iso32_dsb1/Rec_stb_iso32_dsb(
 rep2_iso32_dsb1_rpm4000_cant3     3    0.981  rep2_iso32_dsb1/Rec_stb_iso32_dsb(0+8-7)_copia2-Rpm4000.txt
 ```
 
+### Tabla de estado por condición `rep_iso_dsb`
+
+Es la vista principal de faltantes. Tiene una fila por cada una de las **27**
+condiciones posibles (no solo por las que existen en disco), y las velocidades
+se evalúan contra el catálogo completo:
+
+```
+CONDICION        N_ARCHIVOS  FALTANTES   VELOCIDADES_FALTANTES
+---------------  ----------  ----------  --------------------------------------
+rep1_iso32_dsb2          15  (completo)
+rep1_iso32_dsb1          13  2           mis[2600, 5500]
+rep1_iso68_dsb1          15  1           out[2700]
+rep3_iso68_dsb2          12  4           mis[3400, 3500, 3600] out[600]
+rep2_iso32_dsb3           0  (Ninguno)   mis[600, 1300, 2000, 2500, ...]
+```
+
+Columna `FALTANTES`:
+
+| Valor | Significado |
+|---|---|
+| `(completo)` | Están las 15 velocidades y ninguna es outlier. |
+| `(Ninguno)` | La condición no tiene ningún archivo. |
+| `N` | Número de velocidades no disponibles (sin archivo **+** outlier). |
+
+Columna `VELOCIDADES_FALTANTES`, siempre de menor a mayor:
+
+| Lista | Significado |
+|---|---|
+| `mis[...]` | Velocidades sin ningún archivo. |
+| `out[...]` | Velocidades cuyos archivos son **todos** outlier por peso: el registro existe, pero su tamaño anómalo lo hace inutilizable. |
+
+**Un outlier cuenta como dato que no se tiene**, así que suma al número de la
+columna `FALTANTES` y su velocidad aparece en `out[...]`.
+
+Excepción, para no reportar como perdido algo que sí sirve: si una velocidad
+está repetida (`_cantN`) y **al menos una copia tiene un peso normal**, la
+velocidad se considera disponible y no entra en `out[...]`. El archivo anómalo
+se sigue listando en la sección de outliers, donde se indica que sobra.
+
 ### 2. `faltantes_y_outliers.txt` — solo lo accionable
 
-Contiene únicamente las dos listas que hay que atender: las combinaciones que
-**no están medidas** y las que están medidas pero con un **tamaño de archivo
-atípico**.
+| Sección | Contenido |
+|---|---|
+| A | La misma tabla de estado por condición `rep_iso_dsb`. |
+| B | Listado plano de las combinaciones no disponibles, con el motivo: `SIN ARCHIVO` u `OUTLIER DE PESO`. |
+| C | Detalle de cada archivo outlier: peso, mediana de su grupo y desviación. |
 
 ## Criterio de outlier
 
