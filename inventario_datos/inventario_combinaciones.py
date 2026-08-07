@@ -33,7 +33,11 @@ Con ese inventario el script:
   * Marca los pesos outlier con un criterio robusto (mediana + MAD), que no se
     deja arrastrar por los propios valores atipicos como si lo haria la media.
   * Compara lo encontrado contra la malla completa de combinaciones posibles
-    (rep x iso x dsb x rpm) y senala las que faltan.
+    (rep x iso x dsb x rpm) y senala las que faltan, con una tabla organizada
+    por condicion ``rep_iso_dsb``: cada fila dice si la condicion esta
+    ``(completo)``, si no tiene ningun archivo ``(Ninguno)`` o cuantas
+    velocidades le faltan, y cuales son. Un archivo outlier por peso cuenta
+    como dato NO disponible, asi que su velocidad tambien aparece en esa lista.
   * Avisa de los archivos cuyos parametros quedan fuera del catalogo de valores
     validos (por ejemplo una Rpm900 que no esta en la lista esperada).
 
@@ -335,6 +339,132 @@ def _umbral_robusto(valores: list[float], k: float) -> tuple[float, float, str]:
     return med, max(abs(med) * 0.01, 1e-9), "tolerancia 1%"
 
 
+@dataclass
+class EstadoCondicion:
+    """Estado de una condicion ``repN_isoVG_dsbM`` frente a todas las velocidades.
+
+    Una condicion esta completa cuando tiene un archivo utilizable para cada una
+    de las velocidades del catalogo. Una velocidad se considera NO disponible en
+    dos casos: cuando no hay ningun archivo (``mis``) y cuando los archivos que
+    hay son todos outlier por peso (``out``), porque un registro de tamano
+    anomalo no es un dato utilizable. Si una velocidad esta repetida y al menos
+    una de las copias tiene un peso normal, la velocidad cuenta como disponible.
+    """
+
+    rep: int
+    iso: int
+    dsb: int
+    n_archivos: int = 0                             #: Archivos con RPM del catalogo.
+    mis: list[int] = field(default_factory=list)    #: RPM sin ningun archivo.
+    out: list[int] = field(default_factory=list)    #: RPM cuyos archivos son todos outlier.
+
+    @property
+    def etiqueta(self) -> str:
+        """Etiqueta de la condicion, sin la velocidad."""
+        return f"rep{self.rep}_iso{self.iso}_dsb{self.dsb}"
+
+    @property
+    def n_faltantes(self) -> int:
+        """Velocidades no disponibles: sin archivo mas outlier."""
+        return len(self.mis) + len(self.out)
+
+    @property
+    def sin_datos(self) -> bool:
+        """True si la condicion no tiene ningun archivo del catalogo."""
+        return self.n_archivos == 0
+
+    @property
+    def completa(self) -> bool:
+        """True si estan todas las velocidades y ninguna es outlier."""
+        return self.n_faltantes == 0
+
+    @property
+    def texto_estado(self) -> str:
+        """Celda de la columna FALTANTES: (completo), (Ninguno) o el numero."""
+        if self.sin_datos:
+            return "(Ninguno)"
+        if self.completa:
+            return "(completo)"
+        return str(self.n_faltantes)
+
+    @property
+    def texto_velocidades(self) -> str:
+        """Celda con las velocidades no disponibles: ``mis[...] out[...]``."""
+        partes = []
+        if self.mis:
+            partes.append("mis[" + ", ".join(str(v) for v in sorted(self.mis)) + "]")
+        if self.out:
+            partes.append("out[" + ", ".join(str(v) for v in sorted(self.out)) + "]")
+        return " ".join(partes)
+
+
+def estado_por_condicion(
+    combos: dict[tuple[int, int, int, int], Combinacion],
+) -> list[EstadoCondicion]:
+    """Evalua las 27 condiciones rep_iso_dsb del catalogo contra sus velocidades.
+
+    Se recorren todas las condiciones posibles, no solo las que tienen carpeta,
+    para que una condicion sin ningun archivo aparezca igualmente en la tabla.
+    """
+    estados: list[EstadoCondicion] = []
+    for rep in REPS_VALIDAS:
+        for iso in ISOS_VALIDOS:
+            for dsb in DSBS_VALIDOS:
+                e = EstadoCondicion(rep=rep, iso=iso, dsb=dsb)
+                for rpm in RPMS_VALIDAS:
+                    c = combos.get((rep, iso, dsb, rpm))
+                    if c is None:
+                        e.mis.append(rpm)
+                        continue
+                    e.n_archivos += c.cant
+                    # Solo se pierde la velocidad si NINGUNA copia sirve.
+                    if all(a.outlier for a in c.archivos):
+                        e.out.append(rpm)
+                estados.append(e)
+    return estados
+
+
+def tabla_condiciones(estados: list[EstadoCondicion]) -> list[str]:
+    """Tabla principal de faltantes: una fila por condicion rep_iso_dsb."""
+    return tabla(
+        ["CONDICION", "N_ARCHIVOS", "FALTANTES", "VELOCIDADES_FALTANTES"],
+        [[e.etiqueta, str(e.n_archivos), e.texto_estado, e.texto_velocidades]
+         for e in estados],
+    )
+
+
+def filas_no_disponibles(estados: list[EstadoCondicion]) -> list[list[str]]:
+    """Listado plano de combinaciones no disponibles, por condicion y velocidad."""
+    filas: list[list[str]] = []
+    for e in estados:
+        if e.completa:
+            continue
+        motivos = {rpm: "SIN ARCHIVO" for rpm in e.mis}
+        motivos.update({rpm: "OUTLIER DE PESO" for rpm in e.out})
+        for rpm in sorted(motivos):
+            filas.append([f"{e.etiqueta}_rpm{rpm}", motivos[rpm]])
+    return filas
+
+
+def leyenda_condiciones() -> list[str]:
+    """Explicacion de como leer la tabla de condiciones."""
+    return [
+        f"Una fila por cada una de las {len(REPS_VALIDAS) * len(ISOS_VALIDOS) * len(DSBS_VALIDOS)} "
+        f"condiciones rep_iso_dsb posibles.",
+        "",
+        "Columna FALTANTES:",
+        f"  (completo)  estan las {len(RPMS_VALIDAS)} velocidades y ninguna es outlier",
+        "  (Ninguno)   la condicion no tiene ningun archivo",
+        "  N           numero de velocidades no disponibles (sin archivo + outlier)",
+        "",
+        "Columna VELOCIDADES_FALTANTES (de menor a mayor):",
+        "  mis[...]    velocidades sin ningun archivo",
+        "  out[...]    velocidades cuyos archivos son todos outlier por peso; el",
+        "              registro existe pero su tamano anomalo lo hace inutilizable",
+        "",
+    ]
+
+
 def _clave_natural(texto: str) -> list:
     """Clave de orden natural: rpm600 antes que rpm1300 (y no al reves)."""
     return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", texto)]
@@ -443,6 +573,7 @@ def informe_completo(
     archivos: list[Archivo],
     combos: dict[tuple[int, int, int, int], Combinacion],
     faltantes: list[tuple[int, int, int, int]],
+    estados: list[EstadoCondicion],
     fuera_catalogo: list[Archivo],
     resumen_grupos: list[dict],
     avisos: list[str],
@@ -455,6 +586,10 @@ def informe_completo(
     repetidas = [c for c in combos.values() if c.cant > 1]
     outliers = [a for a in archivos if a.outlier]
     total_mb = sum(a.mb for a in archivos)
+    n_solo_outlier = sum(len(e.out) for e in estados)
+    n_no_disponibles = sum(e.n_faltantes for e in estados)
+    completas = [e for e in estados if e.completa]
+    sin_datos = [e for e in estados if e.sin_datos]
 
     lineas += titulo("INVENTARIO DE COMBINACIONES rep_iso_dsb_rpm")
     lineas += [
@@ -472,14 +607,19 @@ def informe_completo(
         "RESUMEN",
         f"  Archivos encontrados             : {len(archivos)}",
         f"  Peso total                       : {total_mb:.2f} MB",
+        f"  Condiciones rep_iso_dsb          : {len(estados)} "
+        f"(completas: {len(completas)}, sin ningun archivo: {len(sin_datos)})",
         f"  Combinaciones posibles (catalogo): {len(esperadas)}",
-        f"  Combinaciones encontradas        : {len(encontradas_validas)}",
-        f"  Combinaciones faltantes          : {len(faltantes)}",
+        f"  Combinaciones con archivo        : {len(encontradas_validas)}",
+        f"  Combinaciones sin archivo        : {len(faltantes)}",
+        f"  Combinaciones solo con outlier   : {n_solo_outlier}",
+        f"  Combinaciones NO disponibles     : {n_no_disponibles} "
+        f"(sin archivo + outlier)",
         f"  Combinaciones repetidas (cant>1) : {len(repetidas)}",
         f"  Archivos con peso outlier        : {len(outliers)}",
         f"  Archivos fuera de catalogo       : {len(fuera_catalogo)}",
-        f"  Cobertura                        : "
-        f"{100 * len(encontradas_validas) / len(esperadas):.1f} %",
+        f"  Cobertura utilizable             : "
+        f"{100 * (len(esperadas) - n_no_disponibles) / len(esperadas):.1f} %",
     ]
 
     # ---- Tabla principal: un renglon por archivo -------------------------
@@ -517,27 +657,20 @@ def informe_completo(
     else:
         lineas += ["No hay combinaciones repetidas: cada una aparece una sola vez."]
 
-    # ---- Combinaciones faltantes ----------------------------------------
-    lineas += titulo("3. COMBINACIONES FALTANTES (no estan en la base de datos)", nivel=2)
-    if faltantes:
-        lineas += [f"Faltan {len(faltantes)} de {len(esperadas)} combinaciones posibles.", ""]
-        lineas += tabla(
-            ["ETIQUETA", "REP", "ISO", "DSB", "RPM"],
-            [[etiqueta_combo(c), str(c[0]), str(c[1]), str(c[2]), str(c[3])]
-             for c in faltantes],
-        )
-        lineas += ["", "Resumen de faltantes por condicion rep_iso_dsb:"]
-        por_cond: dict[tuple[int, int, int], list[int]] = {}
-        for rep, iso, dsb, rpm in faltantes:
-            por_cond.setdefault((rep, iso, dsb), []).append(rpm)
-        lineas += tabla(
-            ["CONDICION", "N_FALTANTES", "RPM_FALTANTES"],
-            [[f"rep{r}_iso{i}_dsb{d}", str(len(rpms)),
-              ", ".join(str(v) for v in sorted(rpms))]
-             for (r, i, d), rpms in sorted(por_cond.items())],
-        )
+    # ---- Estado por condicion (tabla principal de faltantes) -------------
+    lineas += titulo("3. ESTADO POR CONDICION rep_iso_dsb", nivel=2)
+    lineas += leyenda_condiciones()
+    lineas += tabla_condiciones(estados)
+
+    incompletas = [e for e in estados if not e.completa]
+    if incompletas:
+        lineas += ["", f"Condiciones completas: {len(estados) - len(incompletas)} "
+                       f"de {len(estados)}.", "",
+                   "Detalle de las combinaciones no disponibles:"]
+        lineas += tabla(["ETIQUETA", "MOTIVO"], filas_no_disponibles(estados))
     else:
-        lineas += ["No falta ninguna combinacion: la malla esta completa."]
+        lineas += ["", "Todas las condiciones estan completas: no falta ninguna "
+                       "velocidad y ningun archivo es outlier."]
 
     # ---- Outliers de tamano ---------------------------------------------
     lineas += titulo("4. OUTLIERS POR TAMANO DE ARCHIVO", nivel=2)
@@ -591,32 +724,48 @@ def informe_acciones(
     data_dir: Path,
     combos: dict[tuple[int, int, int, int], Combinacion],
     faltantes: list[tuple[int, int, int, int]],
+    estados: list[EstadoCondicion],
     outliers: list[Archivo],
     resumen_grupos: list[dict],
 ) -> str:
     """Construye el texto del informe reducido: solo faltantes y outliers."""
     centro = {g["grupo"]: g["mediana"] for g in resumen_grupos}
     lineas: list[str] = []
+    incompletas = [e for e in estados if not e.completa]
+    n_no_disponibles = sum(e.n_faltantes for e in estados)
 
     lineas += titulo("COMBINACIONES FALTANTES Y OUTLIERS DE TAMANO")
     lineas += [
         f"Carpeta analizada: {data_dir.resolve()}",
         "",
-        "Este archivo contiene solo las combinaciones que hay que atender:",
+        "Este archivo contiene solo lo que hay que atender:",
         f"  * {len(faltantes)} combinacion{'es' if len(faltantes) != 1 else ''} "
-        f"que NO {'estan' if len(faltantes) != 1 else 'esta'} medida"
-        f"{'s' if len(faltantes) != 1 else ''}.",
-        f"  * {len(outliers)} archivo{'s' if len(outliers) != 1 else ''} "
-        f"medido{'s' if len(outliers) != 1 else ''} con un peso atipico.",
+        f"sin ningun archivo.",
+        f"  * {sum(len(e.out) for e in estados)} combinaciones cuyos archivos son "
+        f"todos outlier por peso.",
+        f"  * {n_no_disponibles} combinaciones NO disponibles en total, sobre "
+        f"{len(malla_completa())} posibles.",
+        f"  * {len(incompletas)} de {len(estados)} condiciones rep_iso_dsb "
+        f"incompletas.",
     ]
 
-    lineas += titulo("A. COMBINACIONES QUE NO ESTAN", nivel=2)
-    if faltantes:
-        lineas += [etiqueta_combo(c) for c in faltantes]
-    else:
-        lineas += ["(ninguna: la malla esta completa)"]
+    lineas += titulo("A. ESTADO POR CONDICION rep_iso_dsb", nivel=2)
+    lineas += leyenda_condiciones()
+    lineas += tabla_condiciones(estados)
 
-    lineas += titulo("B. COMBINACIONES CON PESO OUTLIER", nivel=2)
+    lineas += titulo("B. LISTADO PLANO DE COMBINACIONES NO DISPONIBLES", nivel=2)
+    if incompletas:
+        lineas += tabla(["ETIQUETA", "MOTIVO"], filas_no_disponibles(estados))
+    else:
+        lineas += ["(ninguna: la malla esta completa y sin outliers)"]
+
+    lineas += titulo("C. DETALLE DE LOS ARCHIVOS OUTLIER", nivel=2)
+    lineas += [
+        "Un archivo puede aparecer aqui sin que su combinacion salga en la lista",
+        "anterior: si la combinacion esta repetida y alguna copia tiene un peso",
+        "normal, la velocidad sigue disponible y solo sobra el archivo anomalo.",
+        "",
+    ]
     if outliers:
         lineas += tabla(
             ["ETIQUETA", "PESO_MB", "MEDIANA_GRUPO_MB", "DESVIACION_MB", "ARCHIVO"],
@@ -625,7 +774,7 @@ def informe_acciones(
              for a in sorted(outliers, key=lambda x: -abs(x.mb - centro[x.grupo]))],
         )
     else:
-        lineas += ["(ninguna: todos los pesos son consistentes)"]
+        lineas += ["(ninguno: todos los pesos son consistentes)"]
 
     return "\n".join(lineas) + "\n"
 
@@ -658,6 +807,7 @@ def procesar(args: argparse.Namespace) -> int:
     faltantes = [c for c in malla_completa() if c not in encontradas]
     fuera_catalogo = [a for a in archivos if not a.valido]
     outliers = [a for a in archivos if a.outlier]
+    estados = estado_por_condicion(combos)
 
     outdir = Path(args.outdir).expanduser()
     outdir.mkdir(parents=True, exist_ok=True)
@@ -665,22 +815,30 @@ def procesar(args: argparse.Namespace) -> int:
     ruta_acciones = outdir / "faltantes_y_outliers.txt"
 
     ruta_completo.write_text(
-        informe_completo(data_dir, archivos, combos, faltantes,
+        informe_completo(data_dir, archivos, combos, faltantes, estados,
                          fuera_catalogo, resumen_grupos, avisos, args),
         encoding="utf-8",
     )
     ruta_acciones.write_text(
-        informe_acciones(data_dir, combos, faltantes, outliers, resumen_grupos),
+        informe_acciones(data_dir, combos, faltantes, estados, outliers,
+                         resumen_grupos),
         encoding="utf-8",
     )
 
     repetidas = sum(1 for c in combos.values() if c.cant > 1)
     total_esperadas = len(malla_completa())
+    n_no_disp = sum(e.n_faltantes for e in estados)
+    completas = sum(1 for e in estados if e.completa)
+    sin_datos = sum(1 for e in estados if e.sin_datos)
     print(f"  Archivos encontrados      : {len(archivos)}")
-    print(f"  Combinaciones encontradas : {len(encontradas)} de {total_esperadas} "
-          f"({100 * len(encontradas) / total_esperadas:.1f} %)")
+    print(f"  Condiciones completas     : {completas} de {len(estados)}"
+          + (f" ({sin_datos} sin ningun archivo)" if sin_datos else ""))
+    print(f"  Combinaciones con archivo : {len(encontradas)} de {total_esperadas}")
     print(f"  Combinaciones repetidas   : {repetidas}")
-    print(f"  Combinaciones faltantes   : {len(faltantes)}")
+    print(f"  Combinaciones sin archivo : {len(faltantes)}")
+    print(f"  Combinaciones solo outlier: {sum(len(e.out) for e in estados)}")
+    print(f"  Combinaciones NO disponib.: {n_no_disp} "
+          f"(cobertura utilizable {100 * (total_esperadas - n_no_disp) / total_esperadas:.1f} %)")
     print(f"  Archivos con peso outlier : {len(outliers)}")
     if fuera_catalogo:
         print(f"  Archivos fuera de catalogo: {len(fuera_catalogo)}")

@@ -36,6 +36,12 @@ RPMS = (600, 1300, 2000, 2500, 2600, 2700, 2800,
 #: Peso nominal de un archivo de medicion en la base de datos falsa [MiB].
 PESO_NOMINAL_MB = 1.0
 
+#: Condiciones rep_iso_dsb que no se crean: no tienen ni carpeta ni archivos.
+#: Deben aparecer como (Ninguno) en la tabla por condicion.
+SIN_DATOS = {
+    (2, 32, 3),
+}
+
 #: Combinaciones que se omiten para simular ensayos faltantes.
 FALTANTES = {
     (1, 32, 1, 2600),
@@ -53,11 +59,20 @@ REPETIDAS = {
     (3, 32, 3, 5000): 2,
 }
 
-#: Combinaciones con peso anomalo: factor sobre el peso nominal.
+#: Combinaciones con peso anomalo en TODAS sus copias: factor sobre el nominal.
+#: La velocidad se pierde por completo -> debe salir en out[...].
 OUTLIERS = {
     (1, 68, 1, 2700): 0.15,   # registro truncado
     (2, 68, 2, 3700): 4.00,   # registro mucho mas largo de lo normal
     (3, 46, 1, 1300): 0.40,
+    (3, 68, 2, 600): 0.20,    # condicion que ademas tiene velocidades faltantes
+    (3, 32, 3, 5000): 0.25,   # duplicada con las DOS copias anomalas
+}
+
+#: Combinaciones duplicadas donde solo UNA copia es anomala: {combo: (indice, factor)}.
+#: La velocidad sigue disponible gracias a la copia sana -> NO debe salir en out[...].
+OUTLIERS_PARCIAL = {
+    (1, 46, 2, 2000): (1, 0.20),
 }
 
 
@@ -81,19 +96,24 @@ def generar(outdir: Path, semilla: int) -> int:
     for rep in REPS:
         for iso in ISOS:
             for dsb in DSBS:
+                if (rep, iso, dsb) in SIN_DATOS:
+                    continue
                 carpeta = outdir / f"rep{rep}_iso{iso}_dsb{dsb}"
                 carpeta.mkdir(exist_ok=True)
                 for rpm in RPMS:
                     combo = (rep, iso, dsb, rpm)
                     if combo in FALTANTES:
                         continue
-                    # Pequena variacion natural del tamano (+-2 %).
-                    base = PESO_NOMINAL_MB * OUTLIERS.get(combo, 1.0)
+                    factor = OUTLIERS.get(combo, 1.0)
+                    parcial = OUTLIERS_PARCIAL.get(combo)
                     copias = REPETIDAS.get(combo, 1)
                     for k in range(copias):
+                        f = parcial[1] if parcial and parcial[0] == k else factor
                         sufijo = "" if k == 0 else f"_copia{k}"
                         nombre = f"Rec_stb_iso{iso}_dsb(0+8-7){sufijo}-Rpm{rpm}.txt"
-                        escribir(carpeta / nombre, base * rng.uniform(0.98, 1.02), rng)
+                        # Pequena variacion natural del tamano (+-2 %).
+                        escribir(carpeta / nombre,
+                                 PESO_NOMINAL_MB * f * rng.uniform(0.98, 1.02), rng)
                         n_archivos += 1
 
     # Un archivo con una RPM que no esta en el catalogo.
@@ -103,8 +123,11 @@ def generar(outdir: Path, semilla: int) -> int:
 
     print(f"Base de datos de prueba en {outdir.resolve()}")
     print(f"  {n_archivos} archivos generados")
-    print(f"  {len(FALTANTES)} combinaciones omitidas, "
-          f"{len(REPETIDAS)} repetidas, {len(OUTLIERS)} con peso anomalo")
+    print(f"  {len(SIN_DATOS)} condiciones sin ningun archivo")
+    print(f"  {len(FALTANTES)} combinaciones omitidas")
+    print(f"  {len(REPETIDAS)} combinaciones repetidas")
+    print(f"  {len(OUTLIERS)} con todas sus copias anomalas, "
+          f"{len(OUTLIERS_PARCIAL)} con solo una copia anomala")
     return 0
 
 
