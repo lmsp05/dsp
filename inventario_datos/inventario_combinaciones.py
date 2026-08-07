@@ -11,15 +11,17 @@ cada archivo y cuales pesos son atipicos (outliers).
 QUE HACE
 --------------------------------------------------------------------------
 Recorre una carpeta raiz que contiene subcarpetas con la nomenclatura
-``repN_isoVG_dsbM`` y, dentro de ellas, archivos cuyo nombre termina en
+``repN_isoVG_dsbM`` y, dentro de ellas, archivos cuyo nombre contiene
 ``RpmXXXX``. De cada archivo se deducen los cuatro parametros del ensayo: la
 repeticion, la viscosidad y el desbalance vienen de la subcarpeta; la velocidad
-viene del propio nombre del archivo.
+viene del propio nombre del archivo. Puede haber texto despues del numero de
+RPM: solo se toma el valor de la velocidad.
 
     datos/
     |- rep1_iso32_dsb1/
-    |  |- Rec_stb_iso32_dsb(0+8-7)-Rpm600.txt   -> rep1_iso32_dsb1_rpm600
-    |  |- Rec_stb_iso32_dsb(0+8-7)-Rpm1300.txt  -> rep1_iso32_dsb1_rpm1300
+    |  |- Rec_stb_iso32_dsb(0+8-7)-Rpm600.txt      -> rep1_iso32_dsb1_rpm600
+    |  |- Rec_stb_iso32_dsb(0+8-7)-Rpm1300.txt     -> rep1_iso32_dsb1_rpm1300
+    |  |- Rec_stb_iso32_dsb(0+8-7)-Rpm4500xxxx.txt -> rep1_iso32_dsb1_rpm4500
     |- rep1_iso32_dsb2/
     |- ... hasta rep3_iso68_dsb3
 
@@ -54,9 +56,10 @@ SALIDAS
 
 3. ``tabla_condiciones.txt`` -- la misma informacion por condicion en columnas
    separadas por TABULACION, para abrirla en Excel o leerla con pandas:
-   ``condicion``, ``n_archivos``, ``n_missing``, ``n_outliers``,
-   ``lst_missing``, ``lst_outliers``, ``t_missing``. Los conteos valen 0 cuando
-   no hay nada que contar y las listas quedan vacias.
+   ``condicion``, ``n_en_carpeta``, ``n_archivos``, ``n_missing``,
+   ``n_outliers``, ``n_repetidos``, ``lst_missing``, ``lst_outliers``,
+   ``lst_repetidos``, ``t_missing``. Los conteos valen 0 cuando no hay nada que
+   contar y las listas quedan vacias.
 
 El script es de SOLO LECTURA sobre la base de datos: de cada archivo lee su
 nombre y su tamano, y nada mas. No renombra, no mueve ni modifica ningun
@@ -133,8 +136,10 @@ RPMS_VALIDAS: tuple[int, ...] = (
 #: Nomenclatura de las subcarpetas: repN_isoVG_dsbM.
 PATRON_CARPETA = re.compile(r"rep(?P<rep>\d+)_iso(?P<iso>\d+)_dsb(?P<dsb>\d+)", re.IGNORECASE)
 
-#: Velocidad al final del nombre del archivo: ...Rpm600
-PATRON_RPM = re.compile(r"[Rr][Pp][Mm][\s_\-]*(\d+)\s*$")
+#: Velocidad en el nombre del archivo: ...Rpm600, ...Rpm4500xxxx, ...Rpm2000_v2
+#: No se ancla al final: puede haber texto despues del numero. Si el nombre
+#: tuviera varias coincidencias se toma la ultima.
+PATRON_RPM = re.compile(r"[Rr][Pp][Mm][\s_\-]*(\d+)")
 
 #: Megabyte usado en el informe (MiB, base 1024).
 BYTES_POR_MB = 1024 * 1024
@@ -248,12 +253,15 @@ def malla_completa() -> list[tuple[int, int, int, int]]:
 # RECORRIDO DE LA BASE DE DATOS
 # ============================================================
 
-def descubrir_archivos(data_dir: Path, ext: str = "") -> tuple[list[Archivo], list[str]]:
+def descubrir_archivos(
+    data_dir: Path, ext: str = "",
+) -> tuple[list[Archivo], dict[tuple[int, int, int], int], list[str]]:
     """Recorre la carpeta raiz y devuelve los archivos con sus parametros.
 
     Busca de forma recursiva todas las subcarpetas cuyo nombre siga la
     nomenclatura ``repN_isoVG_dsbM`` y, dentro de cada una, los archivos cuyo
-    nombre (sin extension) termine en ``RpmXXXX``.
+    nombre contenga ``RpmXXXX``. Puede haber texto despues del numero
+    (``...Rpm4500xxxx.txt``): solo se toma el valor de la velocidad.
 
     Parameters
     ----------
@@ -265,11 +273,13 @@ def descubrir_archivos(data_dir: Path, ext: str = "") -> tuple[list[Archivo], li
 
     Returns
     -------
-    (archivos, avisos)
-        Lista de archivos encontrados y lista de avisos sobre carpetas o
-        archivos que no se pudieron interpretar.
+    (archivos, conteo_carpeta, avisos)
+        Archivos interpretados, cuantos archivos hay en la carpeta de cada
+        condicion (sean o no interpretables, sin filtrar por extension) y los
+        avisos sobre carpetas o archivos que no se pudieron interpretar.
     """
     archivos: list[Archivo] = []
+    conteo_carpeta: dict[tuple[int, int, int], int] = {}
     avisos: list[str] = []
     ext = ext.lower()
 
@@ -281,7 +291,7 @@ def descubrir_archivos(data_dir: Path, ext: str = "") -> tuple[list[Archivo], li
     if not carpetas:
         avisos.append(f"No se encontro ninguna subcarpeta con la nomenclatura "
                       f"repN_isoVG_dsbM dentro de {data_dir}")
-        return archivos, avisos
+        return archivos, conteo_carpeta, avisos
 
     # Subcarpetas que no siguen la nomenclatura y tampoco contienen ninguna que
     # si la siga: suelen ser erratas en el nombre (dbs en vez de dsb, etc.).
@@ -295,6 +305,11 @@ def descubrir_archivos(data_dir: Path, ext: str = "") -> tuple[list[Archivo], li
         rep, iso, dsb = int(m.group("rep")), int(m.group("iso")), int(m.group("dsb"))
 
         candidatos = sorted(p for p in carpeta.iterdir() if p.is_file())
+        # Todo lo que hay en la carpeta, sea o no interpretable: sirve para
+        # comparar cuantos archivos se procesan frente a cuantos existen.
+        conteo_carpeta[(rep, iso, dsb)] = (
+            conteo_carpeta.get((rep, iso, dsb), 0) + len(candidatos)
+        )
         if not candidatos:
             avisos.append(f"Carpeta vacia: {carpeta.name}")
             continue
@@ -303,14 +318,14 @@ def descubrir_archivos(data_dir: Path, ext: str = "") -> tuple[list[Archivo], li
         for ruta in candidatos:
             if ext and ruta.suffix.lower() != ext:
                 continue
-            m_rpm = PATRON_RPM.search(ruta.stem)
-            if m_rpm is None:
-                avisos.append(f"Sin RPM al final del nombre, se omite: "
+            coincidencias = PATRON_RPM.findall(ruta.stem)
+            if not coincidencias:
+                avisos.append(f"Sin RPM en el nombre, se omite: "
                               f"{carpeta.name}/{ruta.name}")
                 continue
             archivos.append(Archivo(
                 ruta=ruta, rep=rep, iso=iso, dsb=dsb,
-                rpm=int(m_rpm.group(1)), bytes=ruta.stat().st_size,
+                rpm=int(coincidencias[-1]), bytes=ruta.stat().st_size,
             ))
             n_carpeta += 1
 
@@ -318,7 +333,7 @@ def descubrir_archivos(data_dir: Path, ext: str = "") -> tuple[list[Archivo], li
             avisos.append(f"Sin archivos utilizables: {carpeta.name}")
 
     archivos.sort(key=lambda a: (a.rep, a.iso, a.dsb, a.rpm, a.ruta.name))
-    return archivos, avisos
+    return archivos, conteo_carpeta, avisos
 
 
 def agrupar_combinaciones(archivos: list[Archivo]) -> dict[tuple[int, int, int, int], Combinacion]:
@@ -394,7 +409,9 @@ class EstadoCondicion:
     rep: int
     iso: int
     dsb: int
+    n_carpeta: int = 0                              #: Archivos que hay en la carpeta.
     n_archivos: int = 0                             #: Archivos con RPM del catalogo.
+    rep_extra: dict[int, int] = field(default_factory=dict)  #: RPM -> copias sobrantes.
     mis: list[int] = field(default_factory=list)    #: RPM sin ningun archivo.
     out: list[int] = field(default_factory=list)    #: RPM sin ninguna copia utilizable.
     pesos_out: dict[int, float] = field(default_factory=dict)  #: RPM -> peso perdido [MB].
@@ -440,6 +457,20 @@ class EstadoCondicion:
         return " ".join(partes)
 
     @property
+    def n_repetidos(self) -> int:
+        """Archivos que sobran por estar repetidos.
+
+        Si una velocidad aparece dos veces, uno de los dos archivos es la
+        repeticion y suma 1; si aparece tres veces, suma 2.
+        """
+        return sum(self.rep_extra.values())
+
+    @property
+    def lst_repetidos(self) -> str:
+        """Velocidades repetidas con sus copias sobrantes: ``2000(1), 4500(2)``."""
+        return ", ".join(f"{v}({self.rep_extra[v]})" for v in sorted(self.rep_extra))
+
+    @property
     def lst_missing(self) -> str:
         """Velocidades sin ningun archivo, separadas por coma."""
         return ", ".join(str(v) for v in sorted(self.mis))
@@ -457,23 +488,28 @@ class EstadoCondicion:
 
 def estado_por_condicion(
     combos: dict[tuple[int, int, int, int], Combinacion],
+    conteo_carpeta: dict[tuple[int, int, int], int] | None = None,
 ) -> list[EstadoCondicion]:
     """Evalua las 27 condiciones rep_iso_dsb del catalogo contra sus velocidades.
 
     Se recorren todas las condiciones posibles, no solo las que tienen carpeta,
     para que una condicion sin ningun archivo aparezca igualmente en la tabla.
     """
+    conteo_carpeta = conteo_carpeta or {}
     estados: list[EstadoCondicion] = []
     for rep in REPS_VALIDAS:
         for iso in ISOS_VALIDOS:
             for dsb in DSBS_VALIDOS:
-                e = EstadoCondicion(rep=rep, iso=iso, dsb=dsb)
+                e = EstadoCondicion(rep=rep, iso=iso, dsb=dsb,
+                                    n_carpeta=conteo_carpeta.get((rep, iso, dsb), 0))
                 for rpm in RPMS_VALIDAS:
                     c = combos.get((rep, iso, dsb, rpm))
                     if c is None:
                         e.mis.append(rpm)
                         continue
                     e.n_archivos += c.cant
+                    if c.cant > 1:
+                        e.rep_extra[rpm] = c.cant - 1
                     if any(a.tipo_outlier == "ALTO" for a in c.archivos):
                         e.altos.append(rpm)
                     # Solo se pierde la velocidad si NINGUNA copia es utilizable.
@@ -494,8 +530,9 @@ def tabla_condiciones(estados: list[EstadoCondicion]) -> list[str]:
 
 
 #: Columnas del archivo tabulado, en orden.
-COLUMNAS_TSV = ("condicion", "n_archivos", "n_missing", "n_outliers",
-                "lst_missing", "lst_outliers", "t_missing")
+COLUMNAS_TSV = ("condicion", "n_en_carpeta", "n_archivos", "n_missing",
+                "n_outliers", "n_repetidos", "lst_missing", "lst_outliers",
+                "lst_repetidos", "t_missing")
 
 
 def tabla_tsv(estados: list[EstadoCondicion]) -> str:
@@ -503,16 +540,23 @@ def tabla_tsv(estados: list[EstadoCondicion]) -> str:
 
     Pensada para abrirse directamente en Excel o leerse con pandas. Los conteos
     valen 0 cuando no hay nada que contar y las listas quedan vacias.
+
+    ``n_en_carpeta`` cuenta todo lo que hay en la carpeta de la condicion, sea
+    o no interpretable, para poder compararlo con ``n_archivos``, que son los
+    que si se procesan (velocidad legible y dentro del catalogo).
     """
     lineas = ["\t".join(COLUMNAS_TSV)]
     for e in estados:
         lineas.append("\t".join([
             e.etiqueta,
+            str(e.n_carpeta),
             str(e.n_archivos),
             str(len(e.mis)),
             str(len(e.out)),
+            str(e.n_repetidos),
             e.lst_missing,
             e.lst_outliers,
+            e.lst_repetidos,
             str(e.n_faltantes),
         ]))
     return "\n".join(lineas) + "\n"
@@ -696,7 +740,9 @@ def informe_completo(
         f"  rpm : {', '.join(str(v) for v in RPMS_VALIDAS)}",
         "",
         "RESUMEN",
-        f"  Archivos encontrados             : {len(archivos)}",
+        f"  Archivos en las carpetas         : {sum(e.n_carpeta for e in estados)} "
+        f"(todo lo que hay, interpretable o no)",
+        f"  Archivos procesados              : {len(archivos)}",
         f"  Peso total                       : {total_mb:.2f} MB",
         f"  Condiciones rep_iso_dsb          : {len(estados)} "
         f"(completas: {len(completas)}, sin ningun archivo: {len(sin_datos)})",
@@ -898,7 +944,7 @@ def procesar(args: argparse.Namespace) -> int:
     _aplicar_catalogo(args)
 
     print(f"Recorriendo {data_dir.resolve()} ...")
-    archivos, avisos = descubrir_archivos(data_dir, args.ext)
+    archivos, conteo_carpeta, avisos = descubrir_archivos(data_dir, args.ext)
     if not archivos:
         print("ERROR: no se encontro ningun archivo con nomenclatura "
               "repN_isoVG_dsbM/...RpmXXXX", file=sys.stderr)
@@ -913,7 +959,7 @@ def procesar(args: argparse.Namespace) -> int:
     faltantes = [c for c in malla_completa() if c not in encontradas]
     fuera_catalogo = [a for a in archivos if not a.valido]
     outliers = [a for a in archivos if a.outlier]
-    estados = estado_por_condicion(combos)
+    estados = estado_por_condicion(combos, conteo_carpeta)
 
     outdir = Path(args.outdir).expanduser()
     outdir.mkdir(parents=True, exist_ok=True)
@@ -938,7 +984,8 @@ def procesar(args: argparse.Namespace) -> int:
     n_no_disp = sum(e.n_faltantes for e in estados)
     completas = sum(1 for e in estados if e.completa)
     sin_datos = sum(1 for e in estados if e.sin_datos)
-    print(f"  Archivos encontrados      : {len(archivos)}")
+    print(f"  Archivos en las carpetas  : {sum(e.n_carpeta for e in estados)}")
+    print(f"  Archivos procesados       : {len(archivos)}")
     print(f"  Condiciones completas     : {completas} de {len(estados)}"
           + (f" ({sin_datos} sin ningun archivo)" if sin_datos else ""))
     print(f"  Combinaciones con archivo : {len(encontradas)} de {total_esperadas}")
