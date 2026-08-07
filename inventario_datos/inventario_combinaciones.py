@@ -48,6 +48,13 @@ SALIDAS
    combinaciones que no estan medidas y las que estan medidas pero con un
    tamano de archivo atipico.
 
+El script es de SOLO LECTURA sobre la base de datos: de cada archivo lee su
+nombre y su tamano, y nada mas. No renombra, no mueve ni modifica ningun
+archivo. Las etiquetas (incluido el sufijo ``_cantN``) existen unicamente como
+texto dentro de los informes; los nombres reales de los archivos aparecen sin
+cambios en la columna ARCHIVO. Lo unico que se escribe son los dos .txt, y
+siempre dentro de la carpeta indicada con ``--outdir``.
+
 --------------------------------------------------------------------------
 CRITERIO DE OUTLIER
 --------------------------------------------------------------------------

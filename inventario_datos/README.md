@@ -12,6 +12,11 @@ tienen un archivo de tamaño sospechoso.
 Solo usa la biblioteca estándar de Python (≥ 3.10): no requiere `numpy` ni
 ninguna otra dependencia del proyecto.
 
+> **Es de solo lectura sobre la base de datos.** De cada archivo lee su nombre
+> y su tamaño, nada más: no renombra, no mueve ni modifica ningún archivo. Lo
+> único que escribe son los dos `.txt`, y siempre dentro de la carpeta indicada
+> con `--outdir`.
+
 ## Estructura de datos esperada
 
 ```
@@ -100,6 +105,17 @@ parámetro adicional `_cantN` cuando la combinación aparece N > 1 veces:
 ```
 rep1_iso32_dsb1_rpm600          ← medida una sola vez
 rep2_iso32_dsb1_rpm4000_cant3   ← medida tres veces
+```
+
+Esa etiqueta es un identificador que existe **solo dentro del informe**, en la
+columna `ETIQUETA`; no es el nombre del archivo ni lo modifica. El nombre real
+de cada archivo se muestra tal cual en la columna `ARCHIVO`:
+
+```
+ETIQUETA                       CANT  PESO_MB  ARCHIVO
+rep2_iso32_dsb1_rpm4000_cant3     3    0.988  rep2_iso32_dsb1/Rec_stb_iso32_dsb(0+8-7)-Rpm4000.txt
+rep2_iso32_dsb1_rpm4000_cant3     3    0.983  rep2_iso32_dsb1/Rec_stb_iso32_dsb(0+8-7)_copia1-Rpm4000.txt
+rep2_iso32_dsb1_rpm4000_cant3     3    0.981  rep2_iso32_dsb1/Rec_stb_iso32_dsb(0+8-7)_copia2-Rpm4000.txt
 ```
 
 ### 2. `faltantes_y_outliers.txt` — solo lo accionable
