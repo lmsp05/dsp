@@ -9,11 +9,14 @@ para probar ``inventario_combinaciones.py`` sin necesidad de los datos reales.
 Los archivos no contienen mediciones utiles: solo relleno del tamano deseado.
 Lo que interesa aqui son los nombres y los pesos.
 
-A proposito se introducen los tres casos que el inventario debe detectar:
+A proposito se introducen los casos que el inventario debe detectar:
 
+  * condiciones sin ningun archivo,
   * combinaciones faltantes (se omiten algunas RPM),
   * combinaciones repetidas (un mismo ensayo guardado dos o tres veces),
-  * archivos con peso atipico (mucho mas pequenos o mucho mas grandes),
+  * archivos con peso atipico, bajos y altos, con todas o solo alguna copia,
+  * archivos con texto despues del numero de RPM (``...Rpm4500xxxx.txt``),
+  * archivos ajenos a la nomenclatura, que no se procesan pero si se cuentan,
   * y un archivo con una RPM fuera del catalogo.
 
 Uso:
@@ -75,6 +78,20 @@ OUTLIERS_PARCIAL = {
     (1, 46, 2, 2000): (1, 0.20),
 }
 
+#: Texto que se agrega DESPUES del numero de RPM en el nombre del archivo.
+#: Debe seguir contando como archivo valido de esa velocidad.
+SUFIJOS_TRAS_RPM = {
+    (1, 32, 2, 4500): "xxxx",
+    (2, 46, 1, 2800): "_v2",
+}
+
+#: Archivos que no siguen la nomenclatura y deben quedar fuera del conteo de
+#: procesados, pero si aparecer en la cuenta de archivos que hay en la carpeta.
+BASURA = {
+    (1, 32, 1): ["notas.txt", "calibracion.csv"],
+    (3, 46, 2): ["README.txt"],
+}
+
 
 def escribir(ruta: Path, mb: float, rng: random.Random) -> None:
     """Crea un archivo de texto del tamano pedido con lineas numericas."""
@@ -107,14 +124,20 @@ def generar(outdir: Path, semilla: int) -> int:
                     factor = OUTLIERS.get(combo, 1.0)
                     parcial = OUTLIERS_PARCIAL.get(combo)
                     copias = REPETIDAS.get(combo, 1)
+                    tras_rpm = SUFIJOS_TRAS_RPM.get(combo, "")
                     for k in range(copias):
                         f = parcial[1] if parcial and parcial[0] == k else factor
                         sufijo = "" if k == 0 else f"_copia{k}"
-                        nombre = f"Rec_stb_iso{iso}_dsb(0+8-7){sufijo}-Rpm{rpm}.txt"
+                        nombre = (f"Rec_stb_iso{iso}_dsb(0+8-7){sufijo}"
+                                  f"-Rpm{rpm}{tras_rpm}.txt")
                         # Pequena variacion natural del tamano (+-2 %).
                         escribir(carpeta / nombre,
                                  PESO_NOMINAL_MB * f * rng.uniform(0.98, 1.02), rng)
                         n_archivos += 1
+
+                for nombre in BASURA.get((rep, iso, dsb), []):
+                    (carpeta / nombre).write_text("archivo ajeno al inventario\n",
+                                                  encoding="utf-8")
 
     # Un archivo con una RPM que no esta en el catalogo.
     extra = outdir / "rep1_iso32_dsb1" / "Rec_stb_iso32_dsb(0+8-7)-Rpm900.txt"
@@ -128,6 +151,8 @@ def generar(outdir: Path, semilla: int) -> int:
     print(f"  {len(REPETIDAS)} combinaciones repetidas")
     print(f"  {len(OUTLIERS)} con todas sus copias anomalas, "
           f"{len(OUTLIERS_PARCIAL)} con solo una copia anomala")
+    print(f"  {len(SUFIJOS_TRAS_RPM)} con texto despues del numero de RPM")
+    print(f"  {sum(len(v) for v in BASURA.values())} archivos ajenos a la nomenclatura")
     return 0
 
 

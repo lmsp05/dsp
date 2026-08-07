@@ -22,15 +22,22 @@ ninguna otra dependencia del proyecto.
 ```
 datos/
 ├── rep1_iso32_dsb1/
-│   ├── Rec_stb_iso32_dsb(0+8-7)-Rpm600.txt    → rep1_iso32_dsb1_rpm600
-│   ├── Rec_stb_iso32_dsb(0+8-7)-Rpm1300.txt   → rep1_iso32_dsb1_rpm1300
+│   ├── Rec_stb_iso32_dsb(0+8-7)-Rpm600.txt      → rep1_iso32_dsb1_rpm600
+│   ├── Rec_stb_iso32_dsb(0+8-7)-Rpm1300.txt     → rep1_iso32_dsb1_rpm1300
+│   ├── Rec_stb_iso32_dsb(0+8-7)-Rpm4500xxxx.txt → rep1_iso32_dsb1_rpm4500
 │   └── ...
 ├── rep1_iso32_dsb2/
 └── ... hasta rep3_iso68_dsb3
 ```
 
 * La subcarpeta aporta **rep**, **iso** y **dsb**; el nombre del archivo aporta
-  la **RPM** (el nombre debe terminar en `RpmXXXX`, antes de la extensión).
+  la **RPM**, que se busca como `Rpm` seguido del número.
+* **Puede haber texto después del número** (`...Rpm4500xxxx.txt`,
+  `...Rpm2800_v2.txt`): solo se toma el valor de la velocidad y el archivo
+  cuenta como válido. Si el nombre tuviera varias coincidencias de `Rpm`, se
+  usa la última. El único caso que no se puede resolver es un sufijo que
+  empiece por dígitos pegados al número (`Rpm45002`), porque es indistinguible
+  de la velocidad misma.
 * La búsqueda de subcarpetas es recursiva, así que la raíz puede tener niveles
   intermedios sin que haya que aplanar nada.
 
@@ -176,11 +183,14 @@ directamente en Excel o leerla con `pandas.read_csv(..., sep="\t")`:
 | Columna | Contenido |
 |---|---|
 | `condicion` | Etiqueta `repR_isoI_dsbD`. |
-| `n_archivos` | Archivos encontrados para esa condición. |
+| `n_en_carpeta` | **Todos** los archivos que hay en la carpeta, sean o no interpretables bajo la nomenclatura. Comparar con `n_archivos` dice cuántos se están procesando realmente. |
+| `n_archivos` | Archivos procesados: velocidad legible y dentro del catálogo. |
 | `n_missing` | Cuántas velocidades **no tienen archivo** en la carpeta. |
 | `n_outliers` | Cuántas velocidades se pierden por tener un archivo de peso **bajo** (los de peso alto no cuentan). |
+| `n_repetidos` | Archivos que sobran por estar repetidos: si una velocidad aparece dos veces suma 1; si aparece tres veces suma 2. |
 | `lst_missing` | Velocidades sin archivo, separadas por coma: `2600, 5500`. |
 | `lst_outliers` | Velocidades perdidas por peso bajo, con el peso al lado: `600 (0.2MB), 1300 (0.39MB)`. |
+| `lst_repetidos` | Velocidades duplicadas con sus copias sobrantes: `2000(1), 4500(2)`. |
 | `t_missing` | Total de faltantes: `n_missing + n_outliers`. |
 
 Los conteos valen `0` cuando no hay nada que contar y las listas quedan
@@ -188,12 +198,19 @@ vacías. Cuando una velocidad tiene varias copias y todas son outlier, en
 `lst_outliers` se muestra el peso de la más pequeña, que es la que marca la
 pérdida.
 
+`n_en_carpeta` cuenta lo que hay en disco tal cual, **sin aplicar el filtro
+`--ext`**, para que sirva de referencia de lo que existe frente a lo que se
+procesa. La diferencia con `n_archivos` son los archivos ajenos a la
+nomenclatura (sin `Rpm` en el nombre), los que quedan fuera por `--ext` y los
+que tienen parámetros fuera del catálogo.
+
 ```
-condicion        n_archivos  n_missing  n_outliers  lst_missing       lst_outliers   t_missing
-rep1_iso32_dsb1  13          2          0           2600, 5500                       2
-rep1_iso68_dsb1  15          0          1                             2700 (0.15MB)  1
-rep3_iso68_dsb2  12          3          1           3400, 3500, 3600  600 (0.2MB)    4
-rep2_iso32_dsb3  0           15         0           600, 1300, ...                   15
+condicion        n_en_carpeta  n_archivos  n_missing  n_outliers  n_repetidos  lst_missing       lst_outliers   lst_repetidos  t_missing
+rep1_iso32_dsb1  16            13          2          0           0            2600, 5500                                      2
+rep1_iso46_dsb2  16            16          0          0           1                                             2000(1)        0
+rep1_iso68_dsb1  15            15          0          1           0                              2700 (0.15MB)                 1
+rep3_iso68_dsb2  12            12          3          1           0            3400, 3500, 3600  600 (0.2MB)                    4
+rep2_iso32_dsb3  0             0           15         0           0            600, 1300, ...                                  15
 ```
 
 ## Criterio de outlier
