@@ -52,6 +52,12 @@ SALIDAS
    combinaciones que no estan medidas y las que estan medidas pero con un
    tamano de archivo atipico.
 
+3. ``tabla_condiciones.txt`` -- la misma informacion por condicion en columnas
+   separadas por TABULACION, para abrirla en Excel o leerla con pandas:
+   ``condicion``, ``n_archivos``, ``n_missing``, ``n_outliers``,
+   ``lst_missing``, ``lst_outliers``, ``t_missing``. Los conteos valen 0 cuando
+   no hay nada que contar y las listas quedan vacias.
+
 El script es de SOLO LECTURA sobre la base de datos: de cada archivo lee su
 nombre y su tamano, y nada mas. No renombra, no mueve ni modifica ningun
 archivo. Las etiquetas (incluido el sufijo ``_cantN``) existen unicamente como
@@ -62,6 +68,11 @@ siempre dentro de la carpeta indicada con ``--outdir``.
 --------------------------------------------------------------------------
 CRITERIO DE OUTLIER
 --------------------------------------------------------------------------
+Los outliers se separan en BAJOS (pesan menos de lo normal) y ALTOS (pesan
+mas). Solo los BAJOS cuentan como dato faltante: un registro mas corto de lo
+habitual ha perdido informacion, mientras que uno mas largo la conserva y
+simplemente sobra. Los ALTOS se reportan igualmente para poder revisarlos.
+
 Se marca un archivo como outlier de tamano cuando
 
     |peso - mediana(pesos)| > k * 1.4826 * MAD(pesos)
@@ -145,11 +156,28 @@ class Archivo:
     bytes: int
     outlier: bool = False       #: Peso atipico dentro de su grupo de comparacion.
     grupo: str = ""             #: Grupo con el que se comparo el peso.
+    desviacion: float = 0.0     #: Peso menos la mediana del grupo [MB].
 
     @property
     def mb(self) -> float:
         """Peso del archivo en megabytes."""
         return self.bytes / BYTES_POR_MB
+
+    @property
+    def outlier_bajo(self) -> bool:
+        """True si el archivo es outlier por pesar MENOS de lo normal.
+
+        Solo estos cuentan como dato no disponible: un registro mas corto de lo
+        habitual ha perdido informacion, mientras que uno mas largo la conserva.
+        """
+        return self.outlier and self.desviacion < 0
+
+    @property
+    def tipo_outlier(self) -> str:
+        """Etiqueta del tipo de outlier: BAJO, ALTO o cadena vacia."""
+        if not self.outlier:
+            return ""
+        return "BAJO" if self.desviacion < 0 else "ALTO"
 
     @property
     def combo(self) -> tuple[int, int, int, int]:
@@ -339,6 +367,17 @@ def _umbral_robusto(valores: list[float], k: float) -> tuple[float, float, str]:
     return med, max(abs(med) * 0.01, 1e-9), "tolerancia 1%"
 
 
+def _fmt_mb(mb: float) -> str:
+    """Peso compacto: ``20`` en vez de ``20.00``, pero ``0.15`` sigue completo.
+
+    Un archivo de unos pocos kB se mostraria como ``0``, asi que por debajo de
+    0.01 MB se usan cifras significativas en lugar de decimales fijos.
+    """
+    if 0 < mb < 0.01:
+        return f"{mb:.3g}"
+    return f"{mb:.2f}".rstrip("0").rstrip(".")
+
+
 @dataclass
 class EstadoCondicion:
     """Estado de una condicion ``repN_isoVG_dsbM`` frente a todas las velocidades.
@@ -346,9 +385,10 @@ class EstadoCondicion:
     Una condicion esta completa cuando tiene un archivo utilizable para cada una
     de las velocidades del catalogo. Una velocidad se considera NO disponible en
     dos casos: cuando no hay ningun archivo (``mis``) y cuando los archivos que
-    hay son todos outlier por peso (``out``), porque un registro de tamano
-    anomalo no es un dato utilizable. Si una velocidad esta repetida y al menos
-    una de las copias tiene un peso normal, la velocidad cuenta como disponible.
+    hay son todos outlier por peso BAJO (``out``), porque un registro mas corto
+    de lo normal ha perdido informacion. Un archivo mas pesado de lo normal no
+    resta: la informacion sigue ahi, solo sobra. Si una velocidad esta repetida
+    y al menos una copia es utilizable, la velocidad cuenta como disponible.
     """
 
     rep: int
@@ -356,7 +396,9 @@ class EstadoCondicion:
     dsb: int
     n_archivos: int = 0                             #: Archivos con RPM del catalogo.
     mis: list[int] = field(default_factory=list)    #: RPM sin ningun archivo.
-    out: list[int] = field(default_factory=list)    #: RPM cuyos archivos son todos outlier.
+    out: list[int] = field(default_factory=list)    #: RPM sin ninguna copia utilizable.
+    pesos_out: dict[int, float] = field(default_factory=dict)  #: RPM -> peso perdido [MB].
+    altos: list[int] = field(default_factory=list)  #: RPM con algun archivo de peso alto.
 
     @property
     def etiqueta(self) -> str:
@@ -397,6 +439,21 @@ class EstadoCondicion:
             partes.append("out[" + ", ".join(str(v) for v in sorted(self.out)) + "]")
         return " ".join(partes)
 
+    @property
+    def lst_missing(self) -> str:
+        """Velocidades sin ningun archivo, separadas por coma."""
+        return ", ".join(str(v) for v in sorted(self.mis))
+
+    @property
+    def lst_outliers(self) -> str:
+        """Velocidades perdidas por peso bajo, con el peso del archivo al lado.
+
+        Formato ``600 (0.15MB), 1300 (0.39MB)``. Cuando la velocidad tiene varias
+        copias se muestra la mas pequena, que es la que marca la perdida.
+        """
+        return ", ".join(f"{v} ({_fmt_mb(self.pesos_out[v])}MB)"
+                         for v in sorted(self.out))
+
 
 def estado_por_condicion(
     combos: dict[tuple[int, int, int, int], Combinacion],
@@ -417,9 +474,12 @@ def estado_por_condicion(
                         e.mis.append(rpm)
                         continue
                     e.n_archivos += c.cant
-                    # Solo se pierde la velocidad si NINGUNA copia sirve.
-                    if all(a.outlier for a in c.archivos):
+                    if any(a.tipo_outlier == "ALTO" for a in c.archivos):
+                        e.altos.append(rpm)
+                    # Solo se pierde la velocidad si NINGUNA copia es utilizable.
+                    if all(a.outlier_bajo for a in c.archivos):
                         e.out.append(rpm)
+                        e.pesos_out[rpm] = min(a.mb for a in c.archivos)
                 estados.append(e)
     return estados
 
@@ -433,6 +493,31 @@ def tabla_condiciones(estados: list[EstadoCondicion]) -> list[str]:
     )
 
 
+#: Columnas del archivo tabulado, en orden.
+COLUMNAS_TSV = ("condicion", "n_archivos", "n_missing", "n_outliers",
+                "lst_missing", "lst_outliers", "t_missing")
+
+
+def tabla_tsv(estados: list[EstadoCondicion]) -> str:
+    """Tabla separada por tabulaciones, una fila por condicion rep_iso_dsb.
+
+    Pensada para abrirse directamente en Excel o leerse con pandas. Los conteos
+    valen 0 cuando no hay nada que contar y las listas quedan vacias.
+    """
+    lineas = ["\t".join(COLUMNAS_TSV)]
+    for e in estados:
+        lineas.append("\t".join([
+            e.etiqueta,
+            str(e.n_archivos),
+            str(len(e.mis)),
+            str(len(e.out)),
+            e.lst_missing,
+            e.lst_outliers,
+            str(e.n_faltantes),
+        ]))
+    return "\n".join(lineas) + "\n"
+
+
 def filas_no_disponibles(estados: list[EstadoCondicion]) -> list[list[str]]:
     """Listado plano de combinaciones no disponibles, por condicion y velocidad."""
     filas: list[list[str]] = []
@@ -440,7 +525,7 @@ def filas_no_disponibles(estados: list[EstadoCondicion]) -> list[list[str]]:
         if e.completa:
             continue
         motivos = {rpm: "SIN ARCHIVO" for rpm in e.mis}
-        motivos.update({rpm: "OUTLIER DE PESO" for rpm in e.out})
+        motivos.update({rpm: "OUTLIER PESO BAJO" for rpm in e.out})
         for rpm in sorted(motivos):
             filas.append([f"{e.etiqueta}_rpm{rpm}", motivos[rpm]])
     return filas
@@ -459,8 +544,12 @@ def leyenda_condiciones() -> list[str]:
         "",
         "Columna VELOCIDADES_FALTANTES (de menor a mayor):",
         "  mis[...]    velocidades sin ningun archivo",
-        "  out[...]    velocidades cuyos archivos son todos outlier por peso; el",
-        "              registro existe pero su tamano anomalo lo hace inutilizable",
+        "  out[...]    velocidades cuyos archivos son todos outlier por peso BAJO;",
+        "              el registro existe pero es mas corto de lo normal, asi que",
+        "              ha perdido informacion y no es utilizable",
+        "",
+        "Un archivo mas PESADO de lo normal no resta: la informacion sigue ahi.",
+        "Se reporta en la seccion de outliers, pero no cuenta como faltante.",
         "",
     ]
 
@@ -506,19 +595,21 @@ def marcar_outliers(archivos: list[Archivo], k: float, modo: str) -> list[dict]:
             resumen.append({
                 "grupo": clave, "n": len(lote), "mediana": median(pesos),
                 "umbral": float("nan"), "metodo": "sin evaluar (n<4)", "n_outliers": 0,
-                "min": min(pesos), "max": max(pesos),
+                "n_bajos": 0, "min": min(pesos), "max": max(pesos),
             })
             continue
 
         centro, umbral, metodo = _umbral_robusto(pesos, k)
-        n_out = 0
+        n_out = n_bajos = 0
         for a in lote:
-            a.outlier = abs(a.mb - centro) > umbral
+            a.desviacion = a.mb - centro
+            a.outlier = abs(a.desviacion) > umbral
             n_out += int(a.outlier)
+            n_bajos += int(a.outlier_bajo)
         resumen.append({
             "grupo": clave, "n": len(lote), "mediana": centro,
             "umbral": umbral, "metodo": metodo, "n_outliers": n_out,
-            "min": min(pesos), "max": max(pesos),
+            "n_bajos": n_bajos, "min": min(pesos), "max": max(pesos),
         })
     return resumen
 
@@ -612,11 +703,14 @@ def informe_completo(
         f"  Combinaciones posibles (catalogo): {len(esperadas)}",
         f"  Combinaciones con archivo        : {len(encontradas_validas)}",
         f"  Combinaciones sin archivo        : {len(faltantes)}",
-        f"  Combinaciones solo con outlier   : {n_solo_outlier}",
+        f"  Combinaciones perdidas por peso  : {n_solo_outlier} "
+        f"(sin ninguna copia utilizable)",
         f"  Combinaciones NO disponibles     : {n_no_disponibles} "
-        f"(sin archivo + outlier)",
+        f"(sin archivo + peso bajo)",
         f"  Combinaciones repetidas (cant>1) : {len(repetidas)}",
-        f"  Archivos con peso outlier        : {len(outliers)}",
+        f"  Archivos con peso outlier        : {len(outliers)} "
+        f"(bajos: {sum(1 for a in outliers if a.outlier_bajo)}, "
+        f"altos: {sum(1 for a in outliers if not a.outlier_bajo)})",
         f"  Archivos fuera de catalogo       : {len(fuera_catalogo)}",
         f"  Cobertura utilizable             : "
         f"{100 * (len(esperadas) - n_no_disponibles) / len(esperadas):.1f} %",
@@ -674,24 +768,33 @@ def informe_completo(
 
     # ---- Outliers de tamano ---------------------------------------------
     lineas += titulo("4. OUTLIERS POR TAMANO DE ARCHIVO", nivel=2)
-    lineas += ["Estadisticos por grupo de comparacion:", ""]
+    lineas += [
+        "TIPO BAJO: pesa menos de lo normal, el registro perdio informacion y la",
+        "velocidad se cuenta como faltante. TIPO ALTO: pesa mas de lo normal, se",
+        "reporta pero NO cuenta como faltante.",
+        "",
+        "Estadisticos por grupo de comparacion:",
+        "",
+    ]
     lineas += tabla(
-        ["GRUPO", "N", "MEDIANA_MB", "MIN_MB", "MAX_MB", "DESV_MAX_MB", "METODO", "N_OUTLIERS"],
+        ["GRUPO", "N", "MEDIANA_MB", "MIN_MB", "MAX_MB", "DESV_MAX_MB", "METODO",
+         "N_OUTLIERS", "N_BAJOS"],
         [[g["grupo"], str(g["n"]), f"{g['mediana']:.3f}", f"{g['min']:.3f}",
           f"{g['max']:.3f}",
           "-" if g["umbral"] != g["umbral"] else f"{g['umbral']:.3f}",
-          g["metodo"], str(g["n_outliers"])]
+          g["metodo"], str(g["n_outliers"]), str(g["n_bajos"])]
          for g in resumen_grupos],
     )
     lineas += [""]
     if outliers:
         centro = {g["grupo"]: g["mediana"] for g in resumen_grupos}
         lineas += tabla(
-            ["ETIQUETA", "PESO_MB", "MEDIANA_GRUPO_MB", "DESVIACION_MB", "GRUPO", "ARCHIVO"],
-            [[combos[a.combo].etiqueta, f"{a.mb:.3f}", f"{centro[a.grupo]:.3f}",
-              f"{a.mb - centro[a.grupo]:+.3f}", a.grupo,
+            ["ETIQUETA", "TIPO", "PESO_MB", "MEDIANA_GRUPO_MB", "DESVIACION_MB",
+             "GRUPO", "ARCHIVO"],
+            [[combos[a.combo].etiqueta, a.tipo_outlier, f"{a.mb:.3f}",
+              f"{centro[a.grupo]:.3f}", f"{a.desviacion:+.3f}", a.grupo,
               str(a.ruta.relative_to(data_dir))]
-             for a in sorted(outliers, key=lambda x: -abs(x.mb - centro[x.grupo]))],
+             for a in sorted(outliers, key=lambda x: -abs(x.desviacion))],
         )
     else:
         lineas += ["No se detectaron pesos atipicos."]
@@ -741,8 +844,8 @@ def informe_acciones(
         "Este archivo contiene solo lo que hay que atender:",
         f"  * {len(faltantes)} combinacion{'es' if len(faltantes) != 1 else ''} "
         f"sin ningun archivo.",
-        f"  * {sum(len(e.out) for e in estados)} combinaciones cuyos archivos son "
-        f"todos outlier por peso.",
+        f"  * {sum(len(e.out) for e in estados)} combinaciones perdidas por peso "
+        f"bajo (sin ninguna copia utilizable).",
         f"  * {n_no_disponibles} combinaciones NO disponibles en total, sobre "
         f"{len(malla_completa())} posibles.",
         f"  * {len(incompletas)} de {len(estados)} condiciones rep_iso_dsb "
@@ -761,17 +864,20 @@ def informe_acciones(
 
     lineas += titulo("C. DETALLE DE LOS ARCHIVOS OUTLIER", nivel=2)
     lineas += [
-        "Un archivo puede aparecer aqui sin que su combinacion salga en la lista",
-        "anterior: si la combinacion esta repetida y alguna copia tiene un peso",
-        "normal, la velocidad sigue disponible y solo sobra el archivo anomalo.",
+        "Solo los de TIPO BAJO cuentan como dato faltante; los de TIPO ALTO se",
+        "reportan porque conviene revisarlos, pero no restan.",
+        "Un archivo BAJO tampoco resta si su combinacion esta repetida y alguna",
+        "copia tiene un peso normal: la velocidad sigue disponible.",
         "",
     ]
     if outliers:
         lineas += tabla(
-            ["ETIQUETA", "PESO_MB", "MEDIANA_GRUPO_MB", "DESVIACION_MB", "ARCHIVO"],
-            [[combos[a.combo].etiqueta, f"{a.mb:.3f}", f"{centro[a.grupo]:.3f}",
-              f"{a.mb - centro[a.grupo]:+.3f}", str(a.ruta.relative_to(data_dir))]
-             for a in sorted(outliers, key=lambda x: -abs(x.mb - centro[x.grupo]))],
+            ["ETIQUETA", "TIPO", "PESO_MB", "MEDIANA_GRUPO_MB", "DESVIACION_MB",
+             "ARCHIVO"],
+            [[combos[a.combo].etiqueta, a.tipo_outlier, f"{a.mb:.3f}",
+              f"{centro[a.grupo]:.3f}", f"{a.desviacion:+.3f}",
+              str(a.ruta.relative_to(data_dir))]
+             for a in sorted(outliers, key=lambda x: -abs(x.desviacion))],
         )
     else:
         lineas += ["(ninguno: todos los pesos son consistentes)"]
@@ -813,6 +919,7 @@ def procesar(args: argparse.Namespace) -> int:
     outdir.mkdir(parents=True, exist_ok=True)
     ruta_completo = outdir / "inventario_combinaciones.txt"
     ruta_acciones = outdir / "faltantes_y_outliers.txt"
+    ruta_tsv = outdir / "tabla_condiciones.txt"
 
     ruta_completo.write_text(
         informe_completo(data_dir, archivos, combos, faltantes, estados,
@@ -824,6 +931,7 @@ def procesar(args: argparse.Namespace) -> int:
                          resumen_grupos),
         encoding="utf-8",
     )
+    ruta_tsv.write_text(tabla_tsv(estados), encoding="utf-8")
 
     repetidas = sum(1 for c in combos.values() if c.cant > 1)
     total_esperadas = len(malla_completa())
@@ -836,16 +944,19 @@ def procesar(args: argparse.Namespace) -> int:
     print(f"  Combinaciones con archivo : {len(encontradas)} de {total_esperadas}")
     print(f"  Combinaciones repetidas   : {repetidas}")
     print(f"  Combinaciones sin archivo : {len(faltantes)}")
-    print(f"  Combinaciones solo outlier: {sum(len(e.out) for e in estados)}")
+    print(f"  Perdidas por peso bajo    : {sum(len(e.out) for e in estados)}")
     print(f"  Combinaciones NO disponib.: {n_no_disp} "
           f"(cobertura utilizable {100 * (total_esperadas - n_no_disp) / total_esperadas:.1f} %)")
-    print(f"  Archivos con peso outlier : {len(outliers)}")
+    print(f"  Archivos con peso outlier : {len(outliers)} "
+          f"(bajos: {sum(1 for a in outliers if a.outlier_bajo)}, "
+          f"altos: {sum(1 for a in outliers if not a.outlier_bajo)})")
     if fuera_catalogo:
         print(f"  Archivos fuera de catalogo: {len(fuera_catalogo)}")
     if avisos:
         print(f"  Avisos                    : {len(avisos)} (ver informe)")
     print(f"\nInforme completo    : {ruta_completo}")
     print(f"Faltantes + outliers: {ruta_acciones}")
+    print(f"Tabla tabulada      : {ruta_tsv}")
     return 0
 
 

@@ -95,7 +95,7 @@ verificar que el script detecta los cuatro casos.
 | 1. Tabla de archivos | Un renglón por archivo: etiqueta, `rep`, `iso`, `dsb`, `rpm`, `cant`, peso en MB, estado y ruta. |
 | 2. Combinaciones repetidas | Las que aparecen más de una vez, con su etiqueta `_cantN` y los archivos implicados. |
 | 3. Estado por condición | Tabla principal de faltantes: una fila por cada condición `rep_iso_dsb`, más el detalle plano de las combinaciones no disponibles. |
-| 4. Outliers por tamaño | Estadísticos de cada grupo de comparación y detalle de cada archivo atípico. |
+| 4. Outliers por tamaño | Estadísticos de cada grupo de comparación y detalle de cada archivo atípico, separando `BAJO` de `ALTO`. |
 | 5. Fuera de catálogo | Archivos con algún parámetro que no está en las listas válidas. |
 | 6. Avisos | Carpetas ignoradas, carpetas vacías y archivos sin RPM en el nombre. |
 
@@ -147,23 +147,54 @@ Columna `VELOCIDADES_FALTANTES`, siempre de menor a mayor:
 | Lista | Significado |
 |---|---|
 | `mis[...]` | Velocidades sin ningún archivo. |
-| `out[...]` | Velocidades cuyos archivos son **todos** outlier por peso: el registro existe, pero su tamaño anómalo lo hace inutilizable. |
+| `out[...]` | Velocidades cuyos archivos son **todos** outlier de peso **bajo**: el registro existe, pero es más corto de lo normal y ha perdido información. |
 
-**Un outlier cuenta como dato que no se tiene**, así que suma al número de la
-columna `FALTANTES` y su velocidad aparece en `out[...]`.
+**Un outlier de peso bajo cuenta como dato que no se tiene**, así que suma al
+número de la columna `FALTANTES` y su velocidad aparece en `out[...]`. Un
+archivo más **pesado** de lo normal no resta: la información sigue ahí, solo
+sobra. Se reporta en la sección de outliers marcado como `ALTO`, pero no cuenta
+como faltante.
 
 Excepción, para no reportar como perdido algo que sí sirve: si una velocidad
-está repetida (`_cantN`) y **al menos una copia tiene un peso normal**, la
-velocidad se considera disponible y no entra en `out[...]`. El archivo anómalo
-se sigue listando en la sección de outliers, donde se indica que sobra.
+está repetida (`_cantN`) y **al menos una copia es utilizable**, la velocidad se
+considera disponible y no entra en `out[...]`. El archivo anómalo se sigue
+listando en la sección de outliers, donde se indica que sobra.
 
 ### 2. `faltantes_y_outliers.txt` — solo lo accionable
 
 | Sección | Contenido |
 |---|---|
 | A | La misma tabla de estado por condición `rep_iso_dsb`. |
-| B | Listado plano de las combinaciones no disponibles, con el motivo: `SIN ARCHIVO` u `OUTLIER DE PESO`. |
-| C | Detalle de cada archivo outlier: peso, mediana de su grupo y desviación. |
+| B | Listado plano de las combinaciones no disponibles, con el motivo: `SIN ARCHIVO` u `OUTLIER PESO BAJO`. |
+| C | Detalle de cada archivo outlier: tipo (`BAJO`/`ALTO`), peso, mediana de su grupo y desviación. |
+
+### 3. `tabla_condiciones.txt` — columnas separadas por tabulación
+
+La misma información por condición, en formato tabulado para abrirla
+directamente en Excel o leerla con `pandas.read_csv(..., sep="\t")`:
+
+| Columna | Contenido |
+|---|---|
+| `condicion` | Etiqueta `repR_isoI_dsbD`. |
+| `n_archivos` | Archivos encontrados para esa condición. |
+| `n_missing` | Cuántas velocidades **no tienen archivo** en la carpeta. |
+| `n_outliers` | Cuántas velocidades se pierden por tener un archivo de peso **bajo** (los de peso alto no cuentan). |
+| `lst_missing` | Velocidades sin archivo, separadas por coma: `2600, 5500`. |
+| `lst_outliers` | Velocidades perdidas por peso bajo, con el peso al lado: `600 (0.2MB), 1300 (0.39MB)`. |
+| `t_missing` | Total de faltantes: `n_missing + n_outliers`. |
+
+Los conteos valen `0` cuando no hay nada que contar y las listas quedan
+vacías. Cuando una velocidad tiene varias copias y todas son outlier, en
+`lst_outliers` se muestra el peso de la más pequeña, que es la que marca la
+pérdida.
+
+```
+condicion        n_archivos  n_missing  n_outliers  lst_missing       lst_outliers   t_missing
+rep1_iso32_dsb1  13          2          0           2600, 5500                       2
+rep1_iso68_dsb1  15          0          1                             2700 (0.15MB)  1
+rep3_iso68_dsb2  12          3          1           3400, 3500, 3600  600 (0.2MB)    4
+rep2_iso32_dsb3  0           15         0           600, 1300, ...                   15
+```
 
 ## Criterio de outlier
 
@@ -189,6 +220,10 @@ Casos límite:
 * **Menos de 4 archivos en el grupo** → no se evalúan outliers; la dispersión
   no es estimable de forma fiable y el informe lo indica como
   `sin evaluar (n<4)`.
+
+Los outliers se separan en **`BAJO`** (pesa menos que la mediana) y **`ALTO`**
+(pesa más). Solo los `BAJO` cuentan como dato faltante, por la razón explicada
+arriba: un registro más corto perdió información; uno más largo no.
 
 El grupo de comparación lo elige `--grupo-outliers`: `global` compara todos los
 archivos entre sí (adecuado cuando todos los registros duran lo mismo), `rpm`
