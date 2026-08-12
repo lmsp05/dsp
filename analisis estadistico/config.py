@@ -45,6 +45,16 @@ SENSORES = ["P1Y", "P1X", "P2Y", "P2X"]
 COJINETES = ["P1", "P2"]
 DIRECCIONES = ["Y", "X"]        # orden de columnas en las figuras 2x2
 
+# Color de cada sensor en las figuras estadisticas, donde los 4 proximitores se
+# superponen en unos mismos ejes. Cojinete 1 en azules, cojinete 2 en calidos;
+# la direccion Y en el tono oscuro y la X en el claro.
+COLOR_SENSOR = {
+    "P1Y": "#1f4e79",   # azul oscuro
+    "P1X": "#6fa8dc",   # azul claro
+    "P2Y": "#7f3f00",   # marron
+    "P2X": "#e69138",   # naranja
+}
+
 
 # ============================================================
 # DETECCION DE ESTABILIZACION (paso 1)

@@ -65,6 +65,8 @@ from scipy import stats
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+from matplotlib.lines import Line2D
 
 import config
 import comun
@@ -375,40 +377,80 @@ def _fmt_p(p):
     return "<0.001" if p < 0.001 else f"{p:.3f}"
 
 
+def barras_por_sensor(ax, categorias, valores, rayado=None, ancho_grupo=0.82):
+    """
+    Barras agrupadas con los 4 sensores en unos MISMOS ejes.
+
+    Para cada categoria del eje X se dibuja una barra por sensor, de modo que
+    los 4 proximitores se comparan directamente en la misma figura en vez de
+    repartirse en un panel cada uno.
+
+      categorias : etiquetas del eje X
+      valores    : {sensor: [valor por categoria]}
+      rayado     : {sensor: [bool]} -> las marcadas se dibujan con trama, que se
+                   usa para senalar "no significativo"
+
+    Devuelve las posiciones de los grupos.
+    """
+    sensores = [s for s in config.SENSORES if s in valores]
+    n = len(sensores)
+    x = np.arange(len(categorias), dtype=float)
+    ancho = ancho_grupo / max(n, 1)
+
+    for k, sensor in enumerate(sensores):
+        desplazamiento = (k - (n - 1) / 2) * ancho
+        tramas = (rayado or {}).get(sensor, [False] * len(categorias))
+        for i, (v, t) in enumerate(zip(valores[sensor], tramas)):
+            ax.bar(x[i] + desplazamiento, v, ancho * 0.92,
+                   color=config.COLOR_SENSOR.get(sensor, "#888888"),
+                   edgecolor="black", linewidth=0.4,
+                   hatch="///" if t else None, zorder=2)
+
+    ax.set_xticks(x)
+    ax.set_xlim(-0.5, len(categorias) - 0.5)
+    ax.grid(axis="y", ls="--", alpha=0.4)
+    return x
+
+
+def leyenda_sensores(fig, extra_handles=(), ncol=None, y=-0.02):
+    """Leyenda comun de los 4 sensores, fuera de los ejes."""
+    handles = [Patch(facecolor=config.COLOR_SENSOR[s], edgecolor="black",
+                     linewidth=0.4, label=s) for s in config.SENSORES]
+    handles += list(extra_handles)
+    fig.legend(handles=handles, loc="lower center",
+               ncol=ncol or len(handles), frameon=False, fontsize=10,
+               bbox_to_anchor=(0.5, y))
+
+
 def fig_contribucion(tablas, ruta, extra=""):
-    """Contribucion de cada fuente a la suma de cuadrados, por sensor."""
+    """Contribucion de cada fuente a la SS, con los 4 sensores en unos ejes."""
     # Las fuentes se leen de la propia tabla: asi la figura vale igual para el
     # diseno completo (11 fuentes) y para el reducido de un solo desbalanceo (6).
     fuentes = [f for f in tablas[config.SENSORES[0]]["Fuente"]
                if f != "Repeticion (bloque)"]
     etiquetas = [ETIQUETAS.get(f, f) for f in fuentes]
-    colores = ["#c0392b" if f == "Viscosidad" else
-               ("#7f8c8d" if f.startswith("Error") else "#2980b9") for f in fuentes]
 
-    ymax = max(t["Contribucion_SS_%"].max() for t in tablas.values()) * 1.15
-    fig, axes = plt.subplots(2, 2, figsize=(16, 9), constrained_layout=True)
-    for ax, sensor in zip(axes.ravel(), config.SENSORES):
+    valores, rayado = {}, {}
+    for sensor in config.SENSORES:
         t = tablas[sensor].set_index("Fuente")
-        ax.bar(range(len(fuentes)), [t.loc[f, "Contribucion_SS_%"] for f in fuentes],
-               color=colores, edgecolor="black", linewidth=0.4)
-        for i, f in enumerate(fuentes):
-            p = t.loc[f, "p"]
-            if np.isfinite(p):
-                ax.text(i, t.loc[f, "Contribucion_SS_%"] + ymax * 0.015,
-                        ("*" if p < 0.05 else "ns"), ha="center", fontsize=9,
-                        color="darkred" if p < 0.05 else "gray")
-        ax.set_title(f"Sensor {sensor}", fontweight="bold")
-        ax.set_ylabel("Contribucion a la SS total (%)")
-        ax.set_ylim(0, ymax)
-        ax.set_xticks(range(len(fuentes)))
-        ax.set_xticklabels(etiquetas, rotation=45, ha="right", fontsize=9)
-        ax.grid(axis="y", linestyle="--", alpha=0.4)
-    # El diseno se reconoce por la presencia del tercer estrato de error.
+        valores[sensor] = [float(t.loc[f, "Contribucion_SS_%"]) for f in fuentes]
+        # Trama en las barras que NO son significativas (y en los estratos de
+        # error, que no se contrastan contra nada).
+        rayado[sensor] = [not (np.isfinite(t.loc[f, "p"]) and t.loc[f, "p"] < 0.05)
+                          for f in fuentes]
+
+    fig, ax = plt.subplots(figsize=(16, 7), constrained_layout=True)
+    barras_por_sensor(ax, etiquetas, valores, rayado)
+    ax.set_xticklabels(etiquetas, rotation=45, ha="right", fontsize=10)
+    ax.set_ylabel("Contribucion a la SS total (%)", fontsize=11)
+
     diseno = "split-split-plot" if "Error(c)" in fuentes else "split-plot"
     fig.suptitle(f"Descomposicion de la variabilidad — {diseno}{extra}\n"
-                 "(* = significativo al 5 % con SU termino de error; "
-                 "gris = estratos de error)",
+                 "los 4 proximitores superpuestos · barra rayada = no "
+                 "significativa al 5 % con su termino de error",
                  fontsize=14, fontweight="bold")
+    leyenda_sensores(fig, [Patch(facecolor="white", edgecolor="black",
+                                 hatch="///", label="no significativo")])
     fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
     plt.close(fig)
 
@@ -420,106 +462,144 @@ def fig_comparacion(tablas, ingenuos, ruta, extra=""):
     et = [ETIQUETAS.get(f, f) for f in fuentes]
     x = np.arange(len(fuentes))
 
-    fig, axes = plt.subplots(2, 2, figsize=(16, 9), constrained_layout=True)
-    for ax, sensor in zip(axes.ravel(), config.SENSORES):
-        c = tablas[sensor].set_index("Fuente")
-        n = ingenuos[sensor].set_index("Fuente")
-        p_c = [max(c.loc[f, "p"], 1e-300) for f in fuentes]
-        p_n = [max(n.loc[f, "p"], 1e-300) for f in fuentes]
-        ax.bar(x - 0.2, [-np.log10(v) for v in p_n], 0.4,
-               label="ANOVA ingenuo (todo contra el residual)", color="#e67e22")
-        ax.bar(x + 0.2, [-np.log10(v) for v in p_c], 0.4,
-               label="split-split-plot (error correcto)", color="#27ae60")
-        ax.axhline(-np.log10(0.05), color="black", ls="--", lw=1.2)
-        ax.text(-0.6, -np.log10(0.05), "p=0.05", va="bottom", fontsize=8)
+    # Un panel por MODELO (no por sensor): en cada uno los 4 proximitores
+    # aparecen juntos, que es lo que permite compararlos de un vistazo.
+    fig, axes = plt.subplots(1, 2, figsize=(19, 7), constrained_layout=True,
+                             sharey=True)
+    for ax, (titulo, fuente) in zip(
+            axes, [("ANOVA ingenuo — todo contra el residual", ingenuos),
+                   ("split-plot — cada efecto con SU error", tablas)]):
+        valores = {}
+        for sensor in config.SENSORES:
+            t = fuente[sensor].set_index("Fuente")
+            valores[sensor] = [-np.log10(max(float(t.loc[f, "p"]), 1e-300))
+                               for f in fuentes]
+        barras_por_sensor(ax, et, valores)
+        ax.axhline(-np.log10(0.05), color="black", ls="--", lw=1.4)
+        ax.text(-0.45, -np.log10(0.05), "p = 0.05", va="bottom", fontsize=9)
         # Escala symlog: la zona decisiva (p entre 1 y 0.001) queda lineal y
         # legible, y los p astronomicos del modelo ingenuo no la aplastan.
         ax.set_yscale("symlog", linthresh=3.0, linscale=1.4)
         ax.set_ylim(0, 400)
         ax.set_yticks([0, 1, 2, 3, 10, 100])
         ax.set_yticklabels(["0", "1", "2", "3", "10", "100"])
-        ax.set_title(f"Sensor {sensor}", fontweight="bold")
-        ax.set_ylabel("evidencia   -log10(p)   [escala symlog]")
-        ax.set_xticks(x)
+        ax.set_title(titulo, fontweight="bold")
         ax.set_xticklabels(et, rotation=45, ha="right", fontsize=9)
-        ax.grid(axis="y", linestyle="--", alpha=0.4)
-    axes[0, 0].legend(fontsize=9, loc="upper left")
+    axes[0].set_ylabel("evidencia   -log10(p)   [escala symlog]")
+
     fig.suptitle(f"Consecuencia de respetar el diseno de parcelas subdivididas{extra}\n"
-                 "las barras verdes son la evidencia REAL; las naranjas, la que "
-                 "se obtiene si se ignora la estructura del ensayo",
+                 "el panel derecho es la evidencia REAL; el izquierdo, la que se "
+                 "obtiene si se ignora la estructura del ensayo",
                  fontsize=14, fontweight="bold")
+    leyenda_sensores(fig)
     fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
     plt.close(fig)
 
 
 def fig_efecto_viscosidad(resultados, viscs, ruta, unidad, extra=""):
-    """Medias por aceite con el intervalo que corresponde al error de parcela."""
-    fig, axes = plt.subplots(1, 4, figsize=(17, 4.6), constrained_layout=True)
-    for ax, sensor in zip(axes, config.SENSORES):
-        medias, ms_e, gl_e, n, tab = (resultados[sensor][k] for k in
-                                      ("medias", "ms_e", "gl_e", "n", "tabla"))
-        err = float(stats.t.ppf(0.975, gl_e)) * np.sqrt(ms_e / n)
-        col = [comun.color_condicion(v, 3) for v in viscs]
-        ax.bar(range(len(viscs)), medias, yerr=err, capsize=6, color=col,
-               edgecolor="black", linewidth=0.5)
-        p = tab.set_index("Fuente").loc["Viscosidad", "p"]
-        ax.set_title(f"{sensor}   (p = {_fmt_p(p)})", fontweight="bold")
-        ax.set_xticks(range(len(viscs)))
-        ax.set_xticklabels([f"ISO {v}" for v in viscs])
-        ax.grid(axis="y", linestyle="--", alpha=0.4)
-        ax.set_ylabel(unidad)
-    fig.suptitle(f"Efecto de la viscosidad{extra} — media por aceite con IC 95 % "
-                 f"basado en Error(a)", fontsize=13, fontweight="bold")
+    """
+    Medias por aceite con el intervalo del error de parcela, los 4 sensores en
+    unos mismos ejes: X = sensor, una barra por aceite dentro de cada sensor.
+    """
+    fig, ax = plt.subplots(figsize=(13, 6), constrained_layout=True)
+    n_v = len(viscs)
+    ancho = 0.80 / n_v
+    x = np.arange(len(config.SENSORES), dtype=float)
+
+    for k, v in enumerate(viscs):
+        alturas, errores = [], []
+        for sensor in config.SENSORES:
+            medias, ms_e, gl_e, n = (resultados[sensor][c] for c in
+                                     ("medias", "ms_e", "gl_e", "n"))
+            alturas.append(float(medias[k]))
+            errores.append(float(stats.t.ppf(0.975, gl_e)) * np.sqrt(ms_e / n))
+        ax.bar(x + (k - (n_v - 1) / 2) * ancho, alturas, ancho * 0.9,
+               yerr=errores, capsize=4, color=comun.color_condicion(v, 3),
+               edgecolor="black", linewidth=0.5, label=f"ISO {v}", zorder=2)
+
+    etiquetas = [f"{s}\n(p = {_fmt_p(resultados[s]['tabla'].set_index('Fuente').loc['Viscosidad', 'p'])})"
+                 for s in config.SENSORES]
+    ax.set_xticks(x)
+    ax.set_xticklabels(etiquetas, fontsize=11)
+    ax.set_ylabel(unidad, fontsize=11)
+    ax.grid(axis="y", ls="--", alpha=0.4)
+    ax.legend(fontsize=10, title="aceite")
+    fig.suptitle(f"Efecto de la viscosidad{extra} — media por aceite en cada "
+                 f"proximitor,\ncon IC 95 % basado en Error(a)",
+                 fontsize=13, fontweight="bold")
     fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
     plt.close(fig)
 
 
 def fig_interacciones(df, respuestas, viscs, desbs, vels, ruta, unidad, extra=""):
-    """Interaccion viscosidad x velocidad (arriba) y viscosidad x desbalanceo."""
+    """
+    Interaccion viscosidad x velocidad (arriba) y viscosidad x desbalanceo
+    (abajo), con los 4 proximitores superpuestos en unos mismos ejes.
+
+    Cada sensor se NORMALIZA por su propia media antes de superponerlo: P1Y y
+    P2Y difieren en un factor ~6 en micrometros, asi que sin normalizar el
+    sensor pequeno quedaria aplastado contra el eje y no se veria su forma. Al
+    normalizar, lo que se compara es la FORMA de la respuesta -- que es de lo
+    que habla una interaccion -- y no su magnitud absoluta (esa esta, en
+    micrometros, en p5_efecto_viscosidad.png).
+
+    Color = viscosidad · estilo de linea = sensor.
+    """
     x = np.arange(len(vels))
     # Con un solo desbalanceo la fila viscosidad x desbalanceo seria un unico
     # punto por curva: no se dibuja.
     dos_filas = len(desbs) >= 2
-    fig, axes = plt.subplots(2 if dos_filas else 1, 4,
-                             figsize=(18, 8.5 if dos_filas else 4.8),
-                             constrained_layout=True, squeeze=False)
-    for j, sensor in enumerate(config.SENSORES):
-        col = respuestas[sensor]
-        ax = axes[0, j]
-        for v in viscs:
-            m = df[df["Viscosidad"] == v].groupby("Velocidad")[col].mean()
-            ax.plot(x, m.reindex(vels).to_numpy(), lw=1.8,
-                    color=comun.color_condicion(v, 3), label=f"ISO {v}")
-        ax.set_title(f"{sensor}", fontweight="bold")
-        paso = 1 if len(vels) <= 8 else 2      # con pocas rpm se etiquetan todas
-        ax.set_xticks(x[::paso])
-        ax.set_xticklabels([str(v) for v in vels[::paso]], rotation=60, fontsize=7)
-        ax.grid(alpha=0.3, ls="--")
-        if j == 0:
-            ax.set_ylabel(f"media {unidad}")
-            ax.legend(fontsize=8)
-        ax.set_xlabel("rpm", fontsize=9)
+    estilos = dict(zip(config.SENSORES, ["-", "--", "-.", ":"]))
 
-        if not dos_filas:
-            continue
-        ax = axes[1, j]
+    fig, axes = plt.subplots(2 if dos_filas else 1, 1,
+                             figsize=(15, 9 if dos_filas else 5),
+                             constrained_layout=True, squeeze=False)
+
+    for sensor in config.SENSORES:
+        col = respuestas[sensor]
+        escala = float(df[col].mean()) or 1.0        # media global del sensor
         for v in viscs:
-            m = df[df["Viscosidad"] == v].groupby("Desbalanceo")[col].mean()
-            ax.plot(range(len(desbs)), m.reindex(desbs).to_numpy(), "o-", lw=1.8,
-                    color=comun.color_condicion(v, 3), label=f"ISO {v}")
-        ax.set_xticks(range(len(desbs)))
-        ax.set_xticklabels([f"dsb {d}" for d in desbs])
-        ax.grid(alpha=0.3, ls="--")
-        if j == 0:
-            ax.set_ylabel(f"media {unidad}")
-        ax.set_xlabel("desbalanceo", fontsize=9)
-    n_rep = len(df["Repeticion"].unique())
-    titulo = (f"Interacciones{extra}\n"
-              f"viscosidad x velocidad — cada punto promedia {n_rep} rep x "
-              f"{len(desbs)} desbalanceo(s) = {n_rep * len(desbs)} valores")
+            sub = df[df["Viscosidad"] == v]
+            m = sub.groupby("Velocidad")[col].mean().reindex(vels).to_numpy()
+            axes[0, 0].plot(x, 100.0 * m / escala, lw=1.7,
+                            color=comun.color_condicion(v, 3),
+                            linestyle=estilos[sensor])
+            if dos_filas:
+                m2 = sub.groupby("Desbalanceo")[col].mean().reindex(desbs).to_numpy()
+                axes[1, 0].plot(range(len(desbs)), 100.0 * m2 / escala, "o-",
+                                lw=1.7, color=comun.color_condicion(v, 3),
+                                linestyle=estilos[sensor])
+
+    ax = axes[0, 0]
+    paso = 1 if len(vels) <= 8 else 1
+    ax.set_xticks(x[::paso])
+    ax.set_xticklabels([str(v) for v in vels[::paso]], rotation=60, fontsize=8)
+    ax.set_xlabel("Velocidad [rpm]", fontsize=10)
+    ax.set_ylabel("media normalizada (% de la media del sensor)", fontsize=10)
+    ax.set_title("Viscosidad x velocidad", fontweight="bold")
+    ax.grid(alpha=0.3, ls="--")
+
     if dos_filas:
-        titulo += (f"   |   abajo: viscosidad x desbalanceo — cada punto promedia "
-                   f"{n_rep} rep x {len(vels)} velocidades = "
+        ax = axes[1, 0]
+        ax.set_xticks(range(len(desbs)))
+        ax.set_xticklabels([f"desbalanceo {d}" for d in desbs], fontsize=10)
+        ax.set_ylabel("media normalizada (% de la media del sensor)", fontsize=10)
+        ax.set_title("Viscosidad x desbalanceo", fontweight="bold")
+        ax.grid(alpha=0.3, ls="--")
+
+    n_rep = len(df["Repeticion"].unique())
+    handles = [Line2D([0], [0], color=comun.color_condicion(v, 3), lw=2.4,
+                      label=f"ISO {v}") for v in viscs]
+    handles += [Line2D([0], [0], color="#444444", lw=1.7, linestyle=estilos[s],
+                       label=s) for s in config.SENSORES]
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles),
+               frameon=False, fontsize=10, bbox_to_anchor=(0.5, -0.03))
+
+    titulo = (f"Interacciones{extra} — los 4 proximitores superpuestos\n"
+              f"arriba: cada punto promedia {n_rep} rep x {len(desbs)} "
+              f"desbalanceo(s) = {n_rep * len(desbs)} valores")
+    if dos_filas:
+        titulo += (f"   |   abajo: {n_rep} rep x {len(vels)} velocidades = "
                    f"{n_rep * len(vels)} valores")
     fig.suptitle(titulo, fontsize=12, fontweight="bold")
     fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
@@ -528,47 +608,62 @@ def fig_interacciones(df, respuestas, viscs, desbs, vels, ruta, unidad, extra=""
 
 def fig_viscosidad_por_grupo(resumen, viscs, ruta, unidad, que="tramo de velocidad"):
     """
-    Como cambia el efecto de la viscosidad al recorrer los tramos de velocidad.
+    Como cambia el efecto de la viscosidad al recorrer los niveles de `que`.
 
-    `resumen` = lista de (nombre_grupo, {sensor: medias_por_viscosidad},
+    `resumen` = lista de (nombre, {sensor: medias_por_viscosidad},
                           {sensor: p_viscosidad}).
 
-    Arriba: media por aceite en cada tramo. Abajo: evidencia del efecto en cada
-    tramo. Es la lectura que da sentido a una interaccion Visc x Vel
-    significativa: el efecto no es el mismo a todas las velocidades.
+    Arriba: media por aceite en cada nivel, con los 4 sensores superpuestos y
+    normalizados a su propia media (ver la nota de `fig_interacciones`).
+    Abajo: evidencia del efecto, barras agrupadas por sensor.
     """
     nombres = [n.replace("_", " ") for n, _, _ in resumen]
-    x = np.arange(len(resumen))
-    fig, axes = plt.subplots(2, 4, figsize=(18, 8), constrained_layout=True)
+    x = np.arange(len(resumen), dtype=float)
+    estilos = dict(zip(config.SENSORES, ["-", "--", "-.", ":"]))
 
-    for j, sensor in enumerate(config.SENSORES):
-        ax = axes[0, j]
+    fig, axes = plt.subplots(2, 1, figsize=(15, 9), constrained_layout=True)
+
+    ax = axes[0]
+    for sensor in config.SENSORES:
+        todas = [m[sensor][iv] for _, m, _ in resumen for iv in range(len(viscs))]
+        escala = float(np.mean(todas)) or 1.0
         for iv, v in enumerate(viscs):
-            ax.plot(x, [m[sensor][iv] for _, m, _ in resumen], "o-", lw=2,
-                    color=comun.color_condicion(v, 3), label=f"ISO {v}")
-        ax.set_title(f"{sensor}", fontweight="bold")
-        ax.set_xticks(x)
-        ax.set_xticklabels(nombres, rotation=30, ha="right", fontsize=8)
-        ax.grid(alpha=0.3, ls="--")
-        if j == 0:
-            ax.set_ylabel(f"media {unidad}")
-            ax.legend(fontsize=9)
+            ax.plot(x, [100.0 * m[sensor][iv] / escala for _, m, _ in resumen],
+                    "o-", lw=1.8, ms=4, color=comun.color_condicion(v, 3),
+                    linestyle=estilos[sensor])
+    ax.set_xticks(x)
+    ax.set_xticklabels(nombres, fontsize=10)
+    ax.set_ylabel("media normalizada (% de la media del sensor)", fontsize=10)
+    ax.set_title("Media por aceite en cada nivel", fontweight="bold")
+    ax.grid(alpha=0.3, ls="--")
 
-        ax = axes[1, j]
-        p = np.array([max(pp[sensor], 1e-300) for _, _, pp in resumen])
-        ax.bar(x, -np.log10(p), 0.55,
-               color=["#27ae60" if q < 0.05 else "#bdc3c7" for q in p],
-               edgecolor="black", linewidth=0.4)
-        ax.axhline(-np.log10(0.05), color="black", ls="--", lw=1.2)
-        ax.text(-0.45, -np.log10(0.05), "p=0.05", va="bottom", fontsize=8)
-        ax.set_xticks(x)
-        ax.set_xticklabels(nombres, rotation=30, ha="right", fontsize=8)
-        ax.grid(axis="y", alpha=0.3, ls="--")
-        if j == 0:
-            ax.set_ylabel("evidencia  -log10(p)")
+    ax = axes[1]
+    valores, rayado = {}, {}
+    for sensor in config.SENSORES:
+        ps = [max(float(pp[sensor]), 1e-300) for _, _, pp in resumen]
+        valores[sensor] = [-np.log10(q) for q in ps]
+        rayado[sensor] = [q >= 0.05 for q in ps]
+    barras_por_sensor(ax, nombres, valores, rayado)
+    ax.axhline(-np.log10(0.05), color="black", ls="--", lw=1.4)
+    ax.text(-0.45, -np.log10(0.05), "p = 0.05", va="bottom", fontsize=9)
+    ax.set_xticklabels(nombres, fontsize=10)
+    ax.set_ylabel("evidencia  -log10(p)", fontsize=10)
+    ax.set_title("Evidencia del efecto de la viscosidad "
+                 "(barra rayada = no significativa)", fontweight="bold")
+
+    handles = [Line2D([0], [0], color=comun.color_condicion(v, 3), lw=2.4,
+                      label=f"ISO {v}") for v in viscs]
+    handles += [Patch(facecolor=config.COLOR_SENSOR[s], edgecolor="black",
+                      linewidth=0.4, label=s) for s in config.SENSORES]
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles),
+               frameon=False, fontsize=10, bbox_to_anchor=(0.5, -0.03))
+
+    n_sig = sum(1 for _, _, pp in resumen for s in config.SENSORES
+                if pp[s] < 0.05)
+    n_tot = len(resumen) * len(config.SENSORES)
     fig.suptitle(f"Efecto de la viscosidad segun el {que}\n"
-                 f"arriba: media por aceite en cada nivel · abajo: evidencia del "
-                 f"efecto (verde = significativo al 5 %)",
+                 f"significativa en {n_sig} de {n_tot} casos "
+                 f"(sensor x nivel) · los 4 proximitores superpuestos",
                  fontsize=14, fontweight="bold")
     fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
     plt.close(fig)

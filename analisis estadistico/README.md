@@ -304,6 +304,32 @@ Ojo a un efecto secundario interesante: para los factores de sub-subparcela
 ingenuo, porque el residual agrupado estaba contaminado con la varianza de los
 estratos superiores.
 
+### Presentación de las figuras
+
+Todas las figuras estadísticas ponen **los 4 proximitores en unos mismos ejes**,
+no un panel por sensor:
+
+| Figura | Cómo se superponen |
+|---|---|
+| `p5_contribucion` | barras agrupadas: color = sensor · trama = no significativo |
+| `p5_ingenuo_vs_correcto` | 2 paneles (un modelo cada uno), sensores agrupados dentro |
+| `p5_efecto_viscosidad` | X = sensor, una barra por aceite dentro de cada uno |
+| `p5_interacciones` | color = viscosidad · estilo de línea = sensor |
+| `p5_viscosidad_por_grupo` / `_por_desbalanceo` | líneas arriba, barras agrupadas abajo |
+| `p5_estratos_varianza` | ya era una barra apilada por sensor |
+| `p6_pvalores*` | barras agrupadas: color = sensor · trama = no significativo |
+
+Colores de sensor: cojinete 1 en azules, cojinete 2 en cálidos; la dirección **Y**
+en el tono oscuro y la **X** en el claro.
+
+> **Las figuras de líneas van normalizadas.** En `p5_interacciones` y en la fila
+> superior de `p5_viscosidad_por_grupo`, cada sensor se divide por su propia media
+> antes de superponerlo, y el eje pasa a ser «% de la media del sensor». Sin eso,
+> P1Y y P2Y difieren en un factor ~6 en micrómetros y el sensor pequeño quedaría
+> aplastado contra el eje. Lo que se compara así es la **forma** de la respuesta,
+> que es de lo que habla una interacción; las magnitudes absolutas en µm están en
+> `p5_efecto_viscosidad.png`.
+
 ### Salidas
 
 En `<salida>/p5_estadistica`:

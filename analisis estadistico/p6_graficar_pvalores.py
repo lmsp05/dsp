@@ -97,57 +97,65 @@ def _leyenda(fig, alfa):
     de las barras, y el sentido de la escala (p pequeno = significativo) es
     justo lo que no puede quedar ambiguo.
     """
-    fig.legend(handles=[
-        Patch(facecolor=COLOR_SIG, edgecolor="#555555",
-              label=f"SIGNIFICATIVO — el factor SI influye (p < {alfa:g})"),
-        Patch(facecolor=COLOR_NO_SIG, edgecolor="#555555",
-              label=f"no significativo — sin evidencia de efecto (p ≥ {alfa:g})"),
+    handles = [Patch(facecolor=config.COLOR_SENSOR[s], edgecolor="black",
+                     linewidth=0.4, label=s) for s in config.SENSORES]
+    handles += [
+        Patch(facecolor="white", edgecolor="black", hatch="///",
+              label=f"NO significativo (p ≥ {alfa:g})"),
+        Patch(facecolor=COLOR_SIG, alpha=0.25, edgecolor="none",
+              label=f"zona SIGNIFICATIVA — el factor SI influye (p < {alfa:g})"),
         Line2D([0], [0], color=COLOR_UMBRAL, ls="--", lw=1.8,
                label=f"umbral p = {alfa:g}"),
-    ], loc="lower center", ncol=3, frameon=False, fontsize=10,
-        bbox_to_anchor=(0.5, -0.035))
+    ]
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles),
+               frameon=False, fontsize=9.5, bbox_to_anchor=(0.5, -0.05))
 
 
-def _barras(ax, etiquetas, ps, alfa, ymax, resaltar=None):
+def _barras(ax, categorias, valores, alfa, ymax, resaltar=None):
     """
-    Dibuja las barras de un panel y las anota con su valor p.
+    Barras agrupadas: para cada categoria del eje X, una barra por proximitor.
 
     Eje lineal: la altura de la barra ES el valor p. Por debajo de la linea del
-    umbral = significativo.
-    """
-    x = np.arange(len(ps))
-    alturas = [min(float(p), ymax) for p in ps]      # se recorta lo que sobresale
-    colores = [COLOR_SIG if p < alfa else COLOR_NO_SIG for p in ps]
-    bordes = ["black" if e == resaltar else "#555555" for e in etiquetas]
-    grosor = [2.0 if e == resaltar else 0.5 for e in etiquetas]
+    umbral = significativo, y esas barras van rellenas; las no significativas
+    van rayadas, para que la lectura no dependa solo de la posicion.
 
-    ax.bar(x, alturas, 0.62, color=colores, edgecolor=bordes, linewidth=grosor,
-           zorder=2)
-    for xi, h, p in zip(x, alturas, ps):
-        recortada = float(p) > ymax
-        if recortada:
-            # Flecha que indica que la barra sigue por encima del limite del eje.
-            ax.annotate("", (xi, ymax), xytext=(xi, ymax * 0.94),
-                        arrowprops=dict(arrowstyle="-|>", color="#555555", lw=1.4),
-                        zorder=4)
-        ax.annotate(fmt_p(p), (xi, h), textcoords="offset points", xytext=(0, 5),
-                    ha="center", va="bottom", fontsize=8, rotation=90, zorder=4,
-                    color="black" if p < alfa else "#666666")
+      valores : {sensor: [p por categoria]}
+    """
+    sensores = [s for s in config.SENSORES if s in valores]
+    n = len(sensores)
+    x = np.arange(len(categorias), dtype=float)
+    ancho = 0.82 / max(n, 1)
+
+    for k, sensor in enumerate(sensores):
+        desplazamiento = (k - (n - 1) / 2) * ancho
+        for i, p in enumerate(valores[sensor]):
+            p = float(p)
+            sig = p < alfa
+            ax.bar(x[i] + desplazamiento, min(p, ymax), ancho * 0.9,
+                   color=config.COLOR_SENSOR.get(sensor, "#888888"),
+                   edgecolor="black", linewidth=0.4,
+                   hatch=None if sig else "///", zorder=2)
+            if p > ymax:      # la barra sigue por encima del limite del eje
+                ax.annotate("", (x[i] + desplazamiento, ymax),
+                            xytext=(x[i] + desplazamiento, ymax * 0.93),
+                            arrowprops=dict(arrowstyle="-|>", color="#555555",
+                                            lw=1.1), zorder=4)
+            ax.annotate(fmt_p(p), (x[i] + desplazamiento, min(p, ymax)),
+                        textcoords="offset points", xytext=(0, 4), ha="center",
+                        va="bottom", fontsize=6.5, rotation=90, zorder=4,
+                        color="black" if sig else "#777777")
 
     ax.set_xticks(x)
-    ax.set_xticklabels(etiquetas, rotation=45, ha="right", fontsize=9)
-    if resaltar in etiquetas:
-        i = list(etiquetas).index(resaltar)
+    ax.set_xticklabels(categorias, rotation=45, ha="right", fontsize=10)
+    ax.set_xlim(-0.5, len(categorias) - 0.5)
+    if resaltar in categorias:
+        i = list(categorias).index(resaltar)
         ax.get_xticklabels()[i].set_color(COLOR_UMBRAL)
         ax.get_xticklabels()[i].set_fontweight("bold")
 
     # Eje lineal normal, en unidades de valor p.
     ax.set_ylim(0, ymax)
-
-    # Banda sombreada por DEBAJO del umbral: es la zona en la que un factor SI
-    # es significativo. Se marca explicitamente porque al pasar de la escala
-    # -log10(p) a la escala lineal en p la lectura se invierte (antes mas alto
-    # era mas significativo; ahora es al reves) y se presta a confusion.
+    # Banda sombreada por DEBAJO del umbral: zona en la que el factor SI influye.
     ax.axhspan(0, alfa, color=COLOR_SIG, alpha=0.10, zorder=0)
     ax.axhline(alfa, color=COLOR_UMBRAL, ls="--", lw=1.8, zorder=3)
     ax.text(0.995, alfa + 0.012 * ymax, f"umbral p = {alfa:g}",
@@ -168,18 +176,19 @@ def figura_variante(tab, ruta, alfa, etiqueta, ymax):
     fuentes = list(dict.fromkeys(contrastables["Fuente"]))
     etiquetas = [ETIQUETAS.get(f, f) for f in fuentes]
 
-    fig, axes = plt.subplots(2, 2, figsize=(16, 9), constrained_layout=True)
-    for ax, sensor in zip(axes.ravel(), config.SENSORES):
+    valores = {}
+    for sensor in config.SENSORES:
         t = contrastables[contrastables["Sensor"] == sensor].set_index("Fuente")
-        ps = [float(t.loc[f, "p"]) for f in fuentes]
-        _barras(ax, etiquetas, ps, alfa, ymax, resaltar="Visc")
-        ax.set_title(f"Sensor {sensor}", fontweight="bold")
-        ax.set_ylabel("valor p")
+        valores[sensor] = [float(t.loc[f, "p"]) for f in fuentes]
+
+    fig, ax = plt.subplots(figsize=(16, 7), constrained_layout=True)
+    _barras(ax, etiquetas, valores, alfa, ymax, resaltar="Visc")
+    ax.set_ylabel("valor p", fontsize=11)
 
     fig.suptitle(
         f"Significancia de cada factor — {etiqueta}\n"
-        f"cuanto MAS PEQUENO el valor p, MAS fuerte la evidencia de que el "
-        f"factor influye",
+        f"los 4 proximitores superpuestos · cuanto MAS PEQUENO el valor p, MAS "
+        f"fuerte la evidencia de que el factor influye",
         fontsize=14, fontweight="bold")
     _leyenda(fig, alfa)
     fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
@@ -189,15 +198,17 @@ def figura_variante(tab, ruta, alfa, etiqueta, ymax):
 def figura_viscosidad(resumen, ruta, alfa, ymax):
     """2x2 por sensor: el p de la VISCOSIDAD en todas las variantes."""
     nombres = [n for n, _ in resumen]
-    fig, axes = plt.subplots(2, 2, figsize=(16, 9), constrained_layout=True)
-    for ax, sensor in zip(axes.ravel(), config.SENSORES):
+    valores = {}
+    for sensor in config.SENSORES:
         ps = []
         for _, t in resumen:
             fila = t[(t["Sensor"] == sensor) & (t["Fuente"] == "Viscosidad")]
             ps.append(float(fila["p"].iloc[0]) if len(fila) else np.nan)
-        _barras(ax, nombres, ps, alfa, ymax)
-        ax.set_title(f"Sensor {sensor}", fontweight="bold")
-        ax.set_ylabel("valor p de la viscosidad")
+        valores[sensor] = ps
+
+    fig, ax = plt.subplots(figsize=(16, 7), constrained_layout=True)
+    _barras(ax, nombres, valores, alfa, ymax)
+    ax.set_ylabel("valor p de la viscosidad", fontsize=11)
 
     n_sig = sum(1 for _, t in resumen
                 for _, f in t[t["Fuente"] == "Viscosidad"].iterrows()
@@ -206,7 +217,8 @@ def figura_viscosidad(resumen, ruta, alfa, ymax):
     fig.suptitle(
         f"¿Es la viscosidad un factor relevante? — valor p en cada analisis\n"
         f"significativa en {n_sig} de {n_tot} casos (sensor x analisis) · "
-        f"barra dentro de la banda verde = la viscosidad SI influye",
+        f"los 4 proximitores superpuestos · barra dentro de la banda verde = "
+        f"la viscosidad SI influye",
         fontsize=14, fontweight="bold")
     _leyenda(fig, alfa)
     fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")

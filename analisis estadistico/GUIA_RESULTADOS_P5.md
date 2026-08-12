@@ -230,6 +230,13 @@ un resultado muy común y perfectamente publicable, siempre que se diga así.
 
 ## 3. Los seis PNG
 
+> **Todas las figuras ponen los 4 proximitores en unos mismos ejes**, no un panel
+> por sensor. En las de barras, el color identifica el sensor (cojinete 1 azules,
+> cojinete 2 cálidos; dirección Y oscura, X clara) y la trama rayada marca lo no
+> significativo. En las de líneas, el color es la viscosidad y el estilo de línea
+> el sensor, con los valores normalizados a la media de cada sensor para que
+> sensores de magnitud muy distinta sean comparables.
+
 ### 3.1 `p5_contribucion*.png` — el mapa general
 Cuadrícula 2×2 (un panel por sensor). 10 barras = las 11 fuentes menos
 `Repeticion`. Altura = `Contribucion_SS_%`. Rojo = viscosidad, gris = estratos de
