@@ -1,50 +1,46 @@
 """
-PASO 6 — Graficas de valores p (significancia de cada factor)
-=============================================================
+STEP 6 — p-value figures (significance of each factor)
+======================================================
 
-Genera, con el mismo reparto 2x2 por sensor que `p5_contribucion.png`, una
-figura en la que el eje Y es el **valor p** de cada factor en lugar de su
-contribucion a la suma de cuadrados. Sobre cada barra se escribe el valor p
-exacto y una linea horizontal marca el umbral de significancia (0.05 por
-defecto).
+Same per-probe layout options as step 5, but the Y axis is the **p value** of
+each factor instead of its share of the sum of squares. The exact p is written
+on every bar and a horizontal line marks the significance threshold (0.05 by
+default).
 
-Sirve para responder de un vistazo a "¿es la viscosidad un factor relevante?":
-si su barra queda POR DEBAJO de la linea del umbral, lo es, y el numero escrito
-sobre la barra dice con cuanto margen.
+It answers "is viscosity a relevant factor?" at a glance: if its bar sits BELOW
+the threshold line it is, and the number on the bar says by how much.
 
 --------------------------------------------------------------------------
-COMO SE LEE
+HOW TO READ IT
 --------------------------------------------------------------------------
-El eje Y es el valor p en ESCALA LINEAL NORMAL, de 0 a 1 (el rango natural de
-una probabilidad). La altura de cada barra ES su valor p, sin transformar.
+The Y axis is the p value on an ORDINARY LINEAR SCALE from 0 to 1 (the natural
+range of a probability). The bar height IS the p value, untransformed.
 
-    barra POR DEBAJO de la linea roja  ->  factor SIGNIFICATIVO
-    barra POR ENCIMA de la linea roja  ->  factor no significativo
+    bar BELOW the red line  ->  factor is SIGNIFICANT
+    bar ABOVE the red line  ->  factor is not significant
 
-Es decir: cuanto MAS BAJA la barra, mas fuerte la evidencia. Sobre cada barra
-va escrito el valor p exacto, asi que las barras muy pequenas (p muy por debajo
-del umbral) se distinguen igualmente por su etiqueta.
+So the LOWER the bar, the stronger the evidence. The exact p is printed on each
+bar, so bars far below the threshold are still told apart by their label.
 
-Con --ymax se puede acotar el eje (p.ej. --ymax 0.1) para acercarse a la zona
-del umbral; las barras que sobresalgan se recortan y se marcan con una flecha.
+--ymax bounds the axis (e.g. --ymax 0.1) to zoom into the threshold region;
+bars that exceed it are clipped and flagged with an arrow.
 
 --------------------------------------------------------------------------
-ENTRADA
+INPUT
 --------------------------------------------------------------------------
-Lee los `anova_split_plot*.csv` que ya escribio `p5_anova_split_plot.py` en
-<salida>/p5_estadistica. Detecta solo las variantes que existan: la global, las
-de tramo de velocidad (--grupos-velocidad) y las de nivel de desbalanceo
-(--grupos-desbalanceo).
+Reads the `anova_split_plot*.csv` files already written by
+`p5_anova_split_plot.py` in <salida>/p5_statistics. Only the variants that
+exist are picked up: the global one, the speed bands (--grupos-velocidad) and
+the unbalance levels (--grupos-desbalanceo).
 
-SALIDAS (en la misma carpeta)
-  p6_pvalores<sufijo>.png    una por variante encontrada
-  p6_pvalores_viscosidad.png resumen: el p de la viscosidad en TODAS las
-                             variantes, por sensor
-  p6_pvalores.csv            los mismos numeros en tabla
+OUTPUTS (same folder)
+  p6_pvalues<suffix>.png     one per variant found
+  p6_pvalues_viscosity.png   summary: the viscosity p across ALL variants
+  p6_pvalues.csv             the same numbers as a table
 
-Uso:
-    python p6_graficar_pvalores.py --salida <carpeta_resultados>
-    python p6_graficar_pvalores.py --salida <res> --alfa 0.01
+Usage:
+    python p6_graficar_pvalores.py --salida <results_folder>
+    python p6_graficar_pvalores.py --salida <res> --formato double --ymax 0.1
 """
 
 from __future__ import annotations
@@ -65,23 +61,27 @@ from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 
 import config
+import comun
 from p5_anova_split_plot import ETIQUETAS
 
 # Suelo numerico: por debajo de esto el valor p ya no es representable en doble
 # precision y los CSV traen 0. Se escribe como "<1e-300".
 P_MINIMO = 1e-300
 
-COLOR_SIG = "#27ae60"       # significativo
-COLOR_NO_SIG = "#bdc3c7"    # no significativo
+COLOR_SIG = "#27ae60"       # significant
+COLOR_NO_SIG = "#bdc3c7"    # not significant
 COLOR_UMBRAL = "#c0392b"
+
+# Layout switch, set from the command line by --paneles-por-sensor.
+PANELES_POR_SENSOR = False
 
 
 # ============================================================
-# UTILIDADES
+# HELPERS
 # ============================================================
 
 def fmt_p(p):
-    """Valor p en texto legible."""
+    """p value as readable text."""
     if p is None or not np.isfinite(p):
         return "—"
     if p <= P_MINIMO:
@@ -93,33 +93,36 @@ def fmt_p(p):
 
 def _leyenda(fig, alfa):
     """
-    Leyenda comun. Va fuera de los paneles: dentro chocaria con las etiquetas
-    de las barras, y el sentido de la escala (p pequeno = significativo) es
-    justo lo que no puede quedar ambiguo.
+    Shared legend, placed outside the panels: inside it would collide with the
+    bar labels, and the direction of the scale (small p = significant) is
+    exactly what must not stay ambiguous.
     """
-    handles = [Patch(facecolor=config.COLOR_SENSOR[s], edgecolor="black",
-                     linewidth=0.4, label=s) for s in config.SENSORES]
+    handles = []
+    if not PANELES_POR_SENSOR:
+        handles += [Patch(facecolor=config.COLOR_SENSOR[s], edgecolor="black",
+                          label=s) for s in config.SENSORES]
     handles += [
         Patch(facecolor="white", edgecolor="black", hatch="///",
-              label=f"NO significativo (p ≥ {alfa:g})"),
+              label=f"NOT significant (p >= {alfa:g})"),
         Patch(facecolor=COLOR_SIG, alpha=0.25, edgecolor="none",
-              label=f"zona SIGNIFICATIVA — el factor SI influye (p < {alfa:g})"),
-        Line2D([0], [0], color=COLOR_UMBRAL, ls="--", lw=1.8,
-               label=f"umbral p = {alfa:g}"),
+              label=f"SIGNIFICANT zone — the factor does influence (p < {alfa:g})"),
+        Line2D([0], [0], color=COLOR_UMBRAL, ls="--",
+               label=f"threshold p = {alfa:g}"),
     ]
     fig.legend(handles=handles, loc="lower center", ncol=len(handles),
-               frameon=False, fontsize=9.5, bbox_to_anchor=(0.5, -0.05))
+               frameon=False, bbox_to_anchor=(0.5, -0.05))
 
 
 def _barras(ax, categorias, valores, alfa, ymax, resaltar=None):
     """
-    Barras agrupadas: para cada categoria del eje X, una barra por proximitor.
+    Grouped bars: one bar per probe for every category on the X axis. In
+    per-panel mode `valores` holds a single sensor and the grouping collapses.
 
-    Eje lineal: la altura de la barra ES el valor p. Por debajo de la linea del
-    umbral = significativo, y esas barras van rellenas; las no significativas
-    van rayadas, para que la lectura no dependa solo de la posicion.
+    Linear axis: the bar height IS the p value. Below the threshold line means
+    significant, and those bars are filled; non-significant ones are hatched,
+    so the reading does not depend on position alone.
 
-      valores : {sensor: [p por categoria]}
+      valores : {sensor: [p per category]}
     """
     sensores = [s for s in config.SENSORES if s in valores]
     n = len(sensores)
@@ -142,11 +145,12 @@ def _barras(ax, categorias, valores, alfa, ymax, resaltar=None):
                                             lw=1.1), zorder=4)
             ax.annotate(fmt_p(p), (x[i] + desplazamiento, min(p, ymax)),
                         textcoords="offset points", xytext=(0, 4), ha="center",
-                        va="bottom", fontsize=6.5, rotation=90, zorder=4,
+                        va="bottom", fontsize=matplotlib.rcParams["font.size"] * 0.72,
+                        rotation=90, zorder=4,
                         color="black" if sig else "#777777")
 
     ax.set_xticks(x)
-    ax.set_xticklabels(categorias, rotation=45, ha="right", fontsize=10)
+    ax.set_xticklabels(categorias, rotation=45, ha="right")
     ax.set_xlim(-0.5, len(categorias) - 0.5)
     if resaltar in categorias:
         i = list(categorias).index(resaltar)
@@ -160,7 +164,7 @@ def _barras(ax, categorias, valores, alfa, ymax, resaltar=None):
     ax.axhline(alfa, color=COLOR_UMBRAL, ls="--", lw=1.8, zorder=3)
     ax.text(0.995, alfa + 0.012 * ymax, f"umbral p = {alfa:g}",
             transform=ax.get_yaxis_transform(), ha="right", va="bottom",
-            fontsize=8.5, color=COLOR_UMBRAL, fontweight="bold", zorder=5,
+            color=COLOR_UMBRAL, fontweight="bold", zorder=5,
             bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.8))
     ax.grid(axis="y", ls="--", alpha=0.35)
 
@@ -169,59 +173,76 @@ def _barras(ax, categorias, valores, alfa, ymax, resaltar=None):
 # FIGURAS
 # ============================================================
 
-def figura_variante(tab, ruta, alfa, etiqueta, ymax):
-    """2x2 por sensor: valor p de cada factor en una variante del analisis."""
+def figura_variante(tab, ruta, alfa, etiqueta, ymax, fmt):
+    """p value of every factor in one variant of the analysis."""
     contrastables = tab[tab["p"].notna()
-                        & (tab["Fuente"] != "Repeticion (bloque)")]
-    fuentes = list(dict.fromkeys(contrastables["Fuente"]))
+                        & (tab["Source"] != "Repeticion (bloque)")]
+    fuentes = list(dict.fromkeys(contrastables["Source"]))
     etiquetas = [ETIQUETAS.get(f, f) for f in fuentes]
 
     valores = {}
     for sensor in config.SENSORES:
-        t = contrastables[contrastables["Sensor"] == sensor].set_index("Fuente")
+        t = contrastables[contrastables["Sensor"] == sensor].set_index("Source")
         valores[sensor] = [float(t.loc[f, "p"]) for f in fuentes]
 
-    fig, ax = plt.subplots(figsize=(16, 7), constrained_layout=True)
-    _barras(ax, etiquetas, valores, alfa, ymax, resaltar="Visc")
-    ax.set_ylabel("valor p", fontsize=11)
+    if PANELES_POR_SENSOR:
+        fig, axes = plt.subplots(2, 2, figsize=comun.tam_figura(fmt, 0.85),
+                                 constrained_layout=True)
+        for ax, sensor in zip(axes.ravel(), config.SENSORES):
+            _barras(ax, etiquetas, {sensor: valores[sensor]}, alfa, ymax,
+                    resaltar="Visc")
+            ax.set_title(sensor, fontweight="bold")
+            ax.set_ylabel("p value")
+    else:
+        fig, ax = plt.subplots(figsize=comun.tam_figura(fmt, 0.45),
+                               constrained_layout=True)
+        _barras(ax, etiquetas, valores, alfa, ymax, resaltar="Visc")
+        ax.set_ylabel("p value")
 
     fig.suptitle(
-        f"Significancia de cada factor — {etiqueta}\n"
-        f"los 4 proximitores superpuestos · cuanto MAS PEQUENO el valor p, MAS "
-        f"fuerte la evidencia de que el factor influye",
-        fontsize=14, fontweight="bold")
+        f"Significance of each factor — {etiqueta}\n"
+        f"the SMALLER the p value, the stronger the evidence that the factor "
+        f"influences the response", fontweight="bold")
     _leyenda(fig, alfa)
-    fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
+    fig.savefig(ruta, dpi=fmt["dpi"])
     plt.close(fig)
 
 
-def figura_viscosidad(resumen, ruta, alfa, ymax):
-    """2x2 por sensor: el p de la VISCOSIDAD en todas las variantes."""
+def figura_viscosidad(resumen, ruta, alfa, ymax, fmt):
+    """The VISCOSITY p value across every variant of the analysis."""
     nombres = [n for n, _ in resumen]
     valores = {}
     for sensor in config.SENSORES:
         ps = []
         for _, t in resumen:
-            fila = t[(t["Sensor"] == sensor) & (t["Fuente"] == "Viscosidad")]
+            fila = t[(t["Sensor"] == sensor) & (t["Source"] == "Viscosity")]
             ps.append(float(fila["p"].iloc[0]) if len(fila) else np.nan)
         valores[sensor] = ps
 
-    fig, ax = plt.subplots(figsize=(16, 7), constrained_layout=True)
-    _barras(ax, nombres, valores, alfa, ymax)
-    ax.set_ylabel("valor p de la viscosidad", fontsize=11)
+    if PANELES_POR_SENSOR:
+        fig, axes = plt.subplots(2, 2, figsize=comun.tam_figura(fmt, 0.85),
+                                 constrained_layout=True)
+        for ax, sensor in zip(axes.ravel(), config.SENSORES):
+            _barras(ax, nombres, {sensor: valores[sensor]}, alfa, ymax)
+            ax.set_title(sensor, fontweight="bold")
+            ax.set_ylabel("viscosity p value")
+    else:
+        fig, ax = plt.subplots(figsize=comun.tam_figura(fmt, 0.45),
+                               constrained_layout=True)
+        _barras(ax, nombres, valores, alfa, ymax)
+        ax.set_ylabel("viscosity p value")
 
     n_sig = sum(1 for _, t in resumen
-                for _, f in t[t["Fuente"] == "Viscosidad"].iterrows()
+                for _, f in t[t["Source"] == "Viscosity"].iterrows()
                 if f["p"] < alfa)
     n_tot = len(resumen) * len(config.SENSORES)
     fig.suptitle(
-        f"¿Es la viscosidad un factor relevante? — valor p en cada analisis\n"
-        f"significativa en {n_sig} de {n_tot} casos (sensor x analisis) · "
-        f"los 4 proximitores superpuestos · barra dentro de la banda verde = "
-        f"la viscosidad SI influye",
-        fontsize=14, fontweight="bold")
+        f"Is viscosity a relevant factor? — p value in every analysis\n"
+        f"significant in {n_sig} of {n_tot} cases (probe x analysis) · a bar "
+        f"inside the green band means viscosity DOES influence the response",
+        fontweight="bold")
     _leyenda(fig, alfa)
-    fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
+    fig.savefig(ruta, dpi=fmt["dpi"])
     plt.close(fig)
 
 
@@ -230,39 +251,48 @@ def figura_viscosidad(resumen, ruta, alfa, ymax):
 # ============================================================
 
 def _orden(nombre):
-    """Global primero, luego los tramos de velocidad, luego los desbalanceos."""
+    """Global first, then the speed bands, then the unbalance levels."""
     if nombre == "global":
         return (0, nombre)
-    return (1 if nombre.startswith("Grupo") else 2, nombre)
+    return (1 if nombre.startswith("G") else 2, nombre)
 
 
 def main() -> int:
+    global PANELES_POR_SENSOR
     p = argparse.ArgumentParser(
-        description="Paso 6: graficas del valor p de cada factor, con umbral de "
-                    "significancia.")
+        description="Step 6: p value of each factor, with a significance threshold.")
     p.add_argument("--entrada", default="",
-                   help="Carpeta con los anova_split_plot*.csv "
-                        "(def: <salida>/p5_estadistica)")
+                   help="folder holding the anova_split_plot*.csv files "
+                        "(default: <salida>/p5_statistics)")
     p.add_argument("--salida", default=config.DIR_RESULTADOS)
     p.add_argument("--alfa", type=float, default=0.05,
-                   help="Umbral de significancia (def: 0.05)")
+                   help="significance threshold (default: 0.05)")
     p.add_argument("--ymax", type=float, default=1.0,
-                   help="Limite superior del eje de valor p (def: 1.0, el rango "
-                        "completo de una probabilidad). Usa p.ej. --ymax 0.1 "
-                        "para acercarte a la zona del umbral")
+                   help="upper bound of the p axis (default: 1.0, the full "
+                        "range of a probability). Use e.g. --ymax 0.1 to zoom "
+                        "into the threshold region")
+    p.add_argument("--formato", default=config.FORMATO_POR_DEFECTO,
+                   choices=sorted(config.FORMATOS_FIGURA),
+                   help="figure size/typography preset (default: screen)")
+    p.add_argument("--paneles-por-sensor", dest="paneles", action="store_true",
+                   help="2x2 grid with one panel per probe instead of the four "
+                        "probes on shared axes")
     args = p.parse_args()
+
+    PANELES_POR_SENSOR = args.paneles
+    fmt = comun.aplicar_formato(args.formato)
 
     salida = Path(args.salida).expanduser()
     carpeta = Path(args.entrada).expanduser() if args.entrada \
         else salida / config.DIR_ESTADISTICA
     if not carpeta.is_dir():
-        print(f"ERROR: no existe {carpeta}. Ejecuta antes p5_anova_split_plot.py")
+        print(f"ERROR: {carpeta} does not exist. Run p5_anova_split_plot.py first.")
         return 1
 
     archivos = sorted(carpeta.glob("anova_split_plot*.csv"))
     if not archivos:
-        print(f"ERROR: no hay ningun anova_split_plot*.csv en {carpeta}.\n"
-              f"       Ejecuta antes p5_anova_split_plot.py")
+        print(f"ERROR: no anova_split_plot*.csv found in {carpeta}.\n"
+              f"       Run p5_anova_split_plot.py first.")
         return 1
 
     variantes = []
@@ -271,55 +301,57 @@ def main() -> int:
         variantes.append((nombre, pd.read_csv(ruta)))
     variantes.sort(key=lambda v: _orden(v[0]))
 
-    print(f"Carpeta: {carpeta}")
-    print(f"Variantes encontradas: {len(variantes)} "
-          f"({', '.join(n for n, _ in variantes)})")
-    print(f"Umbral de significancia: p < {args.alfa}")
-    print(f"Eje de valor p: lineal, de 0 a {args.ymax:g}"
-          + ("   (usa --ymax 0.1 para acercarte al umbral)"
-             if args.ymax > 0.2 else "") + "\n")
+    print(f"Folder  : {carpeta}")
+    print(f"Variants: {len(variantes)} ({', '.join(n for n, _ in variantes)})")
+    print(f"Threshold: p < {args.alfa}")
+    print(f"p axis  : linear, 0 to {args.ymax:g}"
+          + ("   (use --ymax 0.1 to zoom into the threshold)"
+             if args.ymax > 0.2 else ""))
+    print(f"Figures : format '{args.formato}', layout "
+          f"{'one panel per probe' if args.paneles else 'probes on shared axes'}\n")
 
     filas = []
     for nombre, tab in variantes:
         sufijo = "" if nombre == "global" else f"_{nombre}"
-        figura_variante(tab, carpeta / f"p6_pvalores{sufijo}.png", args.alfa,
-                        nombre.replace("_", " "), args.ymax)
-        sub = tab[tab["p"].notna() & (tab["Fuente"] != "Repeticion (bloque)")]
+        figura_variante(tab, carpeta / f"p6_pvalues{sufijo}.png", args.alfa,
+                        nombre, args.ymax, fmt)
+        sub = tab[tab["p"].notna() & (tab["Source"] != "Repetition (block)")]
         for _, f in sub.iterrows():
-            filas.append({"Analisis": nombre, "Sensor": f["Sensor"],
-                          "Fuente": f["Fuente"], "GL": f["GL"],
-                          "GL_denominador": f["GL_denominador"], "F": f["F"],
-                          "p": f["p"], "Significativa": "SI" if f["p"] < args.alfa else "no"})
-        print(f"  p6_pvalores{sufijo}.png")
+            filas.append({"Analysis": nombre, "Sensor": f["Sensor"],
+                          "Source": f["Source"], "DF": f["DF"],
+                          "DF_denominator": f["DF_denominator"], "F": f["F"],
+                          "p": f["p"],
+                          "Significant": "yes" if f["p"] < args.alfa else "no"})
+        print(f"  p6_pvalues{sufijo}.png")
 
-    figura_viscosidad(variantes, carpeta / "p6_pvalores_viscosidad.png",
-                      args.alfa, args.ymax)
-    print(f"  p6_pvalores_viscosidad.png")
+    figura_viscosidad(variantes, carpeta / "p6_pvalues_viscosity.png",
+                      args.alfa, args.ymax, fmt)
+    print(f"  p6_pvalues_viscosity.png")
 
     tabla = pd.DataFrame(filas)
-    tabla.to_csv(carpeta / "p6_pvalores.csv", index=False)
+    tabla.to_csv(carpeta / "p6_pvalues.csv", index=False)
 
-    # ---- veredicto sobre la viscosidad ----
-    visc = tabla[tabla["Fuente"] == "Viscosidad"]
-    n_sig = int((visc["Significativa"] == "SI").sum())
+    # ---- verdict on viscosity ----
+    visc = tabla[tabla["Source"] == "Viscosity"]
+    n_sig = int((visc["Significant"] == "yes").sum())
     print("\n" + "=" * 78)
-    print("VISCOSIDAD")
+    print("VISCOSITY")
     print("=" * 78)
-    print(visc.pivot(index="Analisis", columns="Sensor", values="p")
+    print(visc.pivot(index="Analysis", columns="Sensor", values="p")
           .reindex([n for n, _ in variantes])
           .to_string(float_format=lambda v: f"{v:.4g}"))
-    print(f"\nSignificativa (p < {args.alfa}) en {n_sig} de {len(visc)} casos "
-          f"(sensor x analisis).")
+    print(f"\nSignificant (p < {args.alfa}) in {n_sig} of {len(visc)} cases "
+          f"(probe x analysis).")
     if n_sig == len(visc):
-        print("La viscosidad resulta relevante en TODOS los analisis y sensores.")
+        print("Viscosity is relevant in EVERY analysis and at every probe.")
     elif n_sig == 0:
-        print("La viscosidad NO alcanza significancia en ningun caso.")
+        print("Viscosity does not reach significance in any case.")
     else:
-        no_sig = visc[visc["Significativa"] == "no"]
-        print("No alcanza significancia en: "
-              + ", ".join(f"{r.Analisis}/{r.Sensor}" for r in no_sig.itertuples()))
+        no_sig = visc[visc["Significant"] == "no"]
+        print("Not significant in: "
+              + ", ".join(f"{r.Analysis}/{r.Sensor}" for r in no_sig.itertuples()))
 
-    print(f"\nTabla: {carpeta / 'p6_pvalores.csv'}")
+    print(f"\nTable: {carpeta / 'p6_pvalues.csv'}")
     return 0
 
 

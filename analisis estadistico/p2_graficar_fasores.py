@@ -78,14 +78,14 @@ def limites_globales(df, margen: float = 0.04, desenvolver: bool = False):
 
     if not desenvolver:
         return lim_amp, _rango(
-            df[[f"{s}_fase" for s in config.SENSORES]].to_numpy(dtype=float), margen)
+            df[[f"{s}_phase" for s in config.SENSORES]].to_numpy(dtype=float), margen)
 
-    velocidades = sorted(int(v) for v in df["Velocidad"].unique())
+    velocidades = sorted(int(v) for v in df["Speed"].unique())
     valores = []
-    for _, g in df.groupby(["Viscosidad", "Desbalanceo", "Repeticion"], sort=False):
-        g = g.set_index("Velocidad").reindex(velocidades)
+    for _, g in df.groupby(["Viscosity", "Unbalance", "Repetition"], sort=False):
+        g = g.set_index("Speed").reindex(velocidades)
         for s in config.SENSORES:
-            valores.append(comun.desenvolver_fase(g[f"{s}_fase"].to_numpy(dtype=float)))
+            valores.append(comun.desenvolver_fase(g[f"{s}_phase"].to_numpy(dtype=float)))
     return lim_amp, _rango(np.concatenate(valores) if valores else [0.0, 1.0], margen)
 
 
@@ -107,17 +107,17 @@ def _figura(df, cojinete, curvas, titulo, lim_amp, lim_fase, velocidades, ruta,
 
     for j, direccion in enumerate(config.DIRECCIONES):      # columna: Y, X
         sensor = f"{cojinete}{direccion}"
-        for fila, magnitud in enumerate(["amp", "fase"]):   # fila: amplitud, fase
+        for fila, magnitud in enumerate(["amp", "phase"]):  # row: amplitude, phase
             ax = axes[fila, j]
             col = f"{sensor}_{magnitud}"
             for visc, desb, rep in curvas:
-                sub = df[(df["Viscosidad"] == visc) & (df["Desbalanceo"] == desb)
-                         & (df["Repeticion"] == rep)]
+                sub = df[(df["Viscosity"] == visc) & (df["Unbalance"] == desb)
+                         & (df["Repetition"] == rep)]
                 if sub.empty:
                     continue
-                sub = sub.set_index("Velocidad").reindex(velocidades)
+                sub = sub.set_index("Speed").reindex(velocidades)
                 y = sub[col].to_numpy(dtype=float)
-                if magnitud == "fase" and desenvolver:
+                if magnitud == "phase" and desenvolver:
                     y = comun.desenvolver_fase(y)
                 ax.plot(x, y,
                         color=comun.color_condicion(visc, desb),
@@ -127,22 +127,22 @@ def _figura(df, cojinete, curvas, titulo, lim_amp, lim_fase, velocidades, ruta,
             ax.set_ylim(*(lim_amp if magnitud == "amp" else lim_fase))
             ax.grid(True, alpha=0.30, linestyle="--", linewidth=0.6)
             if fila == 0:
-                ax.set_title(f"Sensor {sensor}", fontsize=12, fontweight="bold")
+                ax.set_title(sensor, fontsize=12, fontweight="bold")
             if j == 0:
-                ax.set_ylabel("Amplitud 1X [um]" if magnitud == "amp"
-                              else "Fase 1X [grados]", fontsize=11)
+                ax.set_ylabel("1X amplitude [um]" if magnitud == "amp"
+                              else "1X phase [deg]", fontsize=11)
             if fila == 1:
                 ax.set_xticks(x)
                 ax.set_xticklabels([str(v) for v in velocidades],
                                    rotation=60, fontsize=8)
-                ax.set_xlabel("Velocidad [rpm]  (escala equiespaciada)", fontsize=11)
+                ax.set_xlabel("Speed [rpm]  (evenly spaced scale)", fontsize=11)
 
     axes[1, 0].set_xlim(x[0], x[-1])
 
     # ---- leyenda ----
     handles = [Line2D([0], [0], color=comun.color_condicion(v, d),
                       linestyle=comun.estilo_repeticion(r), linewidth=2,
-                      label=f"ISO {v} · dsb {d} · rep {r}")
+                      label=f"ISO {v} · U{d} · rep {r}")
                for v, d, r in curvas]
     fig.legend(handles=handles, loc="lower center",
                ncol=min(5, max(1, len(handles))), fontsize=8.5,
@@ -171,10 +171,10 @@ def generar_figuras(df, destino: Path, etiqueta: str,
     if lim_amp is None or lim_fase is None:
         lim_amp, lim_fase = limites_globales(df, desenvolver=desenvolver)
 
-    velocidades = sorted(int(v) for v in df["Velocidad"].unique())
-    viscosidades = sorted(int(v) for v in df["Viscosidad"].unique())
-    desbalanceos = sorted(int(v) for v in df["Desbalanceo"].unique())
-    repeticiones = sorted(int(v) for v in df["Repeticion"].unique())
+    velocidades = sorted(int(v) for v in df["Speed"].unique())
+    viscosidades = sorted(int(v) for v in df["Viscosity"].unique())
+    desbalanceos = sorted(int(v) for v in df["Unbalance"].unique())
+    repeticiones = sorted(int(v) for v in df["Repetition"].unique())
 
     destino.mkdir(parents=True, exist_ok=True)
     generadas = []
@@ -183,22 +183,22 @@ def generar_figuras(df, destino: Path, etiqueta: str,
     for desb in desbalanceos:
         curvas = [(v, desb, r) for v in viscosidades for r in repeticiones]
         for coj in config.COJINETES:
-            ruta = destino / f"desbalanceo{desb}_{coj}.png"
+            ruta = destino / f"unbalance{desb}_{coj}.png"
             generadas.append(_figura(
                 df, coj, curvas,
-                f"Cojinete {coj} — desbalanceo {desb} — {etiqueta}\n"
-                f"comparacion de viscosidades y repeticiones",
+                f"Bearing {coj} — unbalance level {desb} — {etiqueta}\n"
+                f"comparison across viscosities and repetitions",
                 lim_amp, lim_fase, velocidades, ruta, desenvolver))
 
     # ---- B) una figura por viscosidad x cojinete: compara desbalanceos y reps ----
     for visc in viscosidades:
         curvas = [(visc, d, r) for d in desbalanceos for r in repeticiones]
         for coj in config.COJINETES:
-            ruta = destino / f"viscosidad{visc}_{coj}.png"
+            ruta = destino / f"viscosity{visc}_{coj}.png"
             generadas.append(_figura(
                 df, coj, curvas,
-                f"Cojinete {coj} — aceite ISO {visc} — {etiqueta}\n"
-                f"comparacion de desbalanceos y repeticiones",
+                f"Bearing {coj} — ISO {visc} oil — {etiqueta}\n"
+                f"comparison across unbalance levels and repetitions",
                 lim_amp, lim_fase, velocidades, ruta, desenvolver))
 
     return generadas, lim_amp, lim_fase
@@ -217,7 +217,7 @@ def main() -> int:
                    help="Carpeta de resultados")
     p.add_argument("--subcarpeta", default=config.NOMBRE_DIR_SIN_COMP,
                    help="Subcarpeta donde escribir las figuras")
-    p.add_argument("--etiqueta", default="sin compensacion de runout",
+    p.add_argument("--etiqueta", default="without runout compensation",
                    help="Texto que se anade al titulo de cada figura")
     p.add_argument("--desenvolver", action="store_true",
                    help="Dibuja la fase de forma continua a lo largo de la "
@@ -237,12 +237,12 @@ def main() -> int:
     generadas, lim_amp, lim_fase = generar_figuras(
         df, destino, args.etiqueta, desenvolver=args.desenvolver)
 
-    print(f"Tabla   : {entrada}  ({len(df)} filas)")
+    print(f"Table   : {entrada}  ({len(df)} rows)")
     if args.desenvolver:
-        print("Fase dibujada de forma continua (--desenvolver).")
-    print(f"Escala Y comun -> amplitud [{lim_amp[0]:.2f}, {lim_amp[1]:.2f}] um  |  "
-          f"fase [{lim_fase[0]:.1f}, {lim_fase[1]:.1f}] grados")
-    print(f"\n{len(generadas)} figuras en: {destino}")
+        print("Phase drawn continuously (--desenvolver).")
+    print(f"Shared Y range -> amplitude [{lim_amp[0]:.2f}, {lim_amp[1]:.2f}] um  |  "
+          f"phase [{lim_fase[0]:.1f}, {lim_fase[1]:.1f}] deg")
+    print(f"\n{len(generadas)} figures in: {destino}")
     for r in generadas:
         print(f"  {r.name}")
     return 0

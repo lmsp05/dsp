@@ -62,9 +62,9 @@ import comun
 
 
 MODOS = {
-    "viscosidad": ["Viscosidad"],
+    "viscosidad": ["Viscosity"],
     "global": [],
-    "rep_viscosidad": ["Repeticion", "Viscosidad"],
+    "rep_viscosidad": ["Repetition", "Viscosity"],
 }
 
 
@@ -80,7 +80,7 @@ def calcular_slow_roll(df, claves, rpm_sr):
       vectores[(clave..., sensor)] = complejo
       diagnostico = lista de dicts con el detalle de cada grupo
     """
-    base = df[df["Velocidad"] == rpm_sr]
+    base = df[df["Speed"] == rpm_sr]
     if base.empty:
         raise SystemExit(f"ERROR: no hay filas a {rpm_sr} rpm para el slow roll.")
 
@@ -91,7 +91,7 @@ def calcular_slow_roll(df, claves, rpm_sr):
         clave = (clave,) if not isinstance(clave, tuple) else clave
         for sensor in config.SENSORES:
             amp = g[f"{sensor}_amp"].to_numpy(dtype=float)
-            fase = g[f"{sensor}_fase"].to_numpy(dtype=float)
+            fase = g[f"{sensor}_phase"].to_numpy(dtype=float)
             ok = np.isfinite(amp) & np.isfinite(fase)
             amp, fase = amp[ok], fase[ok]
             if amp.size == 0:
@@ -131,12 +131,12 @@ def comparar_viscosidades(df, rpm_sr):
     supera claramente al ruido interno, la diferencia observada no es real y
     conviene usar --modo global.
     """
-    base = df[df["Velocidad"] == rpm_sr]
+    base = df[df["Speed"] == rpm_sr]
     filas = []
     for sensor in config.SENSORES:
         medias, intra = {}, []
-        for visc, g in base.groupby("Viscosidad"):
-            z = comun.a_fasor(g[f"{sensor}_amp"], g[f"{sensor}_fase"])
+        for visc, g in base.groupby("Viscosity"):
+            z = comun.a_fasor(g[f"{sensor}_amp"], g[f"{sensor}_phase"])
             z = z[np.isfinite(z)]
             if z.size == 0:
                 continue
@@ -165,7 +165,7 @@ def compensar(df, vectores, claves):
     salida = df.copy()
     n_sin = 0
     for sensor in config.SENSORES:
-        ca, cf = f"{sensor}_amp", f"{sensor}_fase"
+        ca, cf = f"{sensor}_amp", f"{sensor}_phase"
         z = comun.a_fasor(df[ca], df[cf])
         clave_filas = (list(zip(*[df[k] for k in claves])) if claves
                        else [()] * len(df))
@@ -191,12 +191,12 @@ def compensar(df, vectores, claves):
 
 def graficar_slow_roll(df, vectores, claves, rpm_sr, ruta):
     """Diagramas polares de los fasores a `rpm_sr`, coloreados por viscosidad."""
-    base = df[df["Velocidad"] == rpm_sr]
+    base = df[df["Speed"] == rpm_sr]
     fig, axes = plt.subplots(1, len(config.SENSORES), figsize=(17, 4.8),
                              subplot_kw={"projection": "polar"})
     for ax, sensor in zip(np.atleast_1d(axes), config.SENSORES):
-        for visc, g in base.groupby("Viscosidad"):
-            z = comun.a_fasor(g[f"{sensor}_amp"], g[f"{sensor}_fase"])
+        for visc, g in base.groupby("Viscosity"):
+            z = comun.a_fasor(g[f"{sensor}_amp"], g[f"{sensor}_phase"])
             col = comun.color_condicion(int(visc), 3)
             ax.plot(np.angle(z), np.abs(z), "o", ms=4, color=col, alpha=0.65,
                     label=f"ISO {int(visc)}")
@@ -257,7 +257,7 @@ def main() -> int:
     print(f"Slow roll a {args.rpm_sr} rpm, modo '{args.modo}' "
           f"({len(vectores)} vectores)\n")
 
-    cols = [c for c in ["Viscosidad", "Repeticion"] if c in diag.columns]
+    cols = [c for c in ["Viscosity", "Repetition"] if c in diag.columns]
     print("Vectores de slow roll:")
     print(diag[cols + ["Sensor", "n", "SR_amp_um", "SR_fase_deg",
                        "fase_media_ingenua_deg", "error_metodo_ingenuo_deg",

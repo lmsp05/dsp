@@ -1,53 +1,67 @@
 """
-PASO 5 — Analisis estadistico acorde al diseno del ensayo
-=========================================================
+STEP 5 — Statistical analysis matched to the experimental design
+================================================================
 
-EL PROBLEMA
+THE PROBLEM
 -----------
-El ensayo NO es un experimento completamente aleatorizado. Es un diseno de
-PARCELAS SUBDIVIDIDAS (split-split-plot) en bloques:
+The experiment is NOT completely randomised. It is a SPLIT-SPLIT-PLOT design
+in blocks:
 
-    bloque          -> repeticion   (r = 3)
-    parcela grande  -> viscosidad   (a = 3)   se cambia el aceite: dificil
-    subparcela      -> desbalanceo  (b = 3)   se cambia la masa dentro del aceite
-    sub-subparcela  -> velocidad    (c = 15)  barrido dentro de cada montaje
+    block          -> repetition  (r = 3)
+    whole plot     -> viscosity   (a = 3)   changing the oil is expensive
+    subplot        -> unbalance   (b = 3)   the mass is changed within an oil
+    sub-subplot    -> speed       (c = 15)  sweep within a single mounting
 
-Cada nivel de aleatorizacion tiene su PROPIO termino de error. Contrastar la
-viscosidad contra el residual global (como hace un ANOVA factorial corriente)
-la trata como si se hubiese re-montado el rotor 405 veces de forma
-independiente, cuando en realidad solo hay 9 unidades de parcela grande
-(3 bloques x 3 aceites). El resultado es un denominador demasiado pequeno,
-una F inflada y un valor p irreal.
+Every randomisation level has its OWN error term. Testing viscosity against the
+global residual (as an ordinary factorial ANOVA does) treats it as if the rotor
+had been re-mounted 405 independent times, when there are only 9 whole-plot
+units (3 blocks x 3 oils). The denominator is then far too small, the F ratio
+is inflated and the p value is unreal.
 
-    Efecto           se contrasta contra          gl del denominador
-    ---------------------------------------------------------------
-    Viscosidad       Error(a) = Rep x Visc                4
-    Desbalanceo      Error(b) = Rep x Desb dentro de Visc  12
-    Visc x Desb      Error(b)                             12
-    Velocidad        Error(c) = residual                 252
-    Visc x Vel       Error(c)                            252
-    Desb x Vel       Error(c)                            252
-    Visc x Desb x Vel Error(c)                           252
+    Effect             tested against                 denominator df
+    ------------------------------------------------------------------
+    Viscosity          Error(a) = Rep x Visc                  4
+    Unbalance          Error(b) = Rep x Unb within Visc      12
+    Visc x Unb         Error(b)                              12
+    Speed              Error(c) = residual                  252
+    Visc x Speed       Error(c)                             252
+    Unb x Speed        Error(c)                             252
+    Visc x Unb x Speed Error(c)                             252
 
-Es decir: la viscosidad se juzga con 4 grados de libertad, no con 252. Este
-script calcula la descomposicion completa, aplica cada F con su denominador
-correcto y, para que la diferencia sea visible, calcula TAMBIEN el ANOVA
-ingenuo (el que se venia usando) y los pone lado a lado.
+In other words: viscosity is judged with 4 degrees of freedom, not 252. This
+script computes the full decomposition, applies each F with its correct
+denominator and, so the difference is visible, also computes the NAIVE ANOVA
+and prints both side by side.
 
-SALIDAS (en <salida>/p5_estadistica)
-------------------------------------
-  anova_split_plot.csv         tabla completa por sensor, con F y p correctos
-  anova_ingenuo.csv            el ANOVA factorial corriente, para comparar
-  comparacion_viscosidad.csv   resumen del contraste correcto vs ingenuo
-  posthoc_viscosidad.csv       Tukey entre aceites con el error de parcela grande
-  componentes_varianza.csv     varianza atribuible a cada estrato
-  p5_*.png                     figuras que explican el efecto y el diseno
-  (opcional --grupos-velocidad) anova_split_plot_<grupo>.csv por tramo de rpm
+FIGURE LAYOUT
+-------------
+--formato picks the final figure width and sizes the type for it, so figures
+can be dropped into a two-column letter-size page at 100 %:
 
-Uso:
-    python p5_anova_split_plot.py --salida <carpeta_resultados>
-    python p5_anova_split_plot.py --salida <res> --entrada <res>/p1_fasores.txt
-    python p5_anova_split_plot.py --salida <res> --grupos-velocidad
+    screen  wide, for reviewing on a monitor (default)
+    column  one column of a two-column page   (3.5 in / 88.9 mm)
+    double  spanning both columns             (7.16 in / 181.6 mm)
+
+--paneles-por-sensor draws the bar figures as a 2x2 grid with one panel per
+probe instead of overlaying the four probes on shared axes. With few, short
+category labels the shared-axes version is more compact; with many categories
+the per-probe panels stay legible at column width.
+
+OUTPUTS (in <salida>/p5_statistics)
+-----------------------------------
+  anova_split_plot.csv        full table per sensor, with correct F and p
+  anova_naive.csv             the ordinary factorial ANOVA, for comparison
+  viscosity_comparison.csv    correct vs naive test, summarised
+  posthoc_viscosity.csv       Tukey between oils using the whole-plot error
+  variance_components.csv     variance attributable to each stratum
+  p5_*.png                    figures explaining the effect and the design
+  (--grupos-velocidad)        anova_split_plot_<G1..G4>.csv per speed band
+  (--grupos-desbalanceo)      anova_split_plot_<U1..U3>.csv per unbalance level
+
+Usage:
+    python p5_anova_split_plot.py --salida <results_folder>
+    python p5_anova_split_plot.py --salida <res> --formato double --paneles-por-sensor
+    python p5_anova_split_plot.py --salida <res> --grupos-velocidad --grupos-desbalanceo
 """
 
 from __future__ import annotations
@@ -72,25 +86,23 @@ import config
 import comun
 
 
-# Tramos de velocidad para el analisis opcional por grupos (como f3_s1_v2.py).
-GRUPOS_VELOCIDAD = {
-    "Grupo_1_bajas":     [600, 1300, 2000],
-    "Grupo_2_pre_1a":    [2500, 2600, 2700, 2800],
-    "Grupo_3_1a_critica": [3400, 3500, 3600, 3700],
-    "Grupo_4_altas":     [4000, 4500, 5000, 5500],
-}
+# Speed bands for the optional per-band analysis (see config.GRUPOS_VELOCIDAD).
+GRUPOS_VELOCIDAD = {k: v["rpm"] for k, v in config.GRUPOS_VELOCIDAD.items()}
+
+# Layout switch, set from the command line by --paneles-por-sensor.
+PANELES_POR_SENSOR = False
 
 ETIQUETAS = {
-    "Repeticion (bloque)": "Rep",
-    "Viscosidad": "Visc",
+    "Repetition (block)": "Block",
+    "Viscosity": "Visc",
     "Error(a) = Rep x Visc": "Error(a)",
-    "Desbalanceo": "Desb",
-    "Viscosidad x Desbalanceo": "Visc×Desb",
-    "Error(b) = Rep x Desb | Visc": "Error(b)",
-    "Velocidad": "Vel",
-    "Viscosidad x Velocidad": "Visc×Vel",
-    "Desbalanceo x Velocidad": "Desb×Vel",
-    "Viscosidad x Desbalanceo x Velocidad": "Visc×Desb×Vel",
+    "Unbalance": "Unb",
+    "Viscosity x Unbalance": "Visc×Unb",
+    "Error(b) = Rep x Unb | Visc": "Error(b)",
+    "Speed": "Speed",
+    "Viscosity x Speed": "Visc×Speed",
+    "Unbalance x Speed": "Unb×Speed",
+    "Viscosity x Unbalance x Speed": "Visc×Unb×Speed",
     "Error(c)": "Error(c)",
     # diseno reducido (un solo desbalanceo): split-plot de dos estratos
     "Error(b) = residual": "Error(b)",
@@ -113,8 +125,8 @@ def _tensor(df, respuesta, reps, viscs, desbs, vels):
     ij = {v: i for i, v in enumerate(viscs)}
     ik = {v: i for i, v in enumerate(desbs)}
     il = {v: i for i, v in enumerate(vels)}
-    for rep, vi, de, ve, y in zip(df["Repeticion"], df["Viscosidad"],
-                                  df["Desbalanceo"], df["Velocidad"],
+    for rep, vi, de, ve, y in zip(df["Repetition"], df["Viscosity"],
+                                  df["Unbalance"], df["Speed"],
                                   df[respuesta]):
         Y[ir[rep], ij[vi], ik[de], il[ve]] = y
     faltan = int(np.isnan(Y).sum())
@@ -176,16 +188,16 @@ def anova_split_split_plot(Y):
                       + SS_C + SS_AC + SS_BC + SS_ABC)
 
     filas = [
-        ("Repeticion (bloque)",                    SS_R,   r - 1,                 "Error(a)"),
-        ("Viscosidad",                             SS_A,   a - 1,                 "Error(a)"),
+        ("Repetition (block)",                    SS_R,   r - 1,                 "Error(a)"),
+        ("Viscosity",                             SS_A,   a - 1,                 "Error(a)"),
         ("Error(a) = Rep x Visc",                  SS_Ea,  (r - 1) * (a - 1),     ""),
-        ("Desbalanceo",                            SS_B,   b - 1,                 "Error(b)"),
-        ("Viscosidad x Desbalanceo",               SS_AB,  (a - 1) * (b - 1),     "Error(b)"),
-        ("Error(b) = Rep x Desb | Visc",           SS_Eb,  a * (r - 1) * (b - 1), ""),
-        ("Velocidad",                              SS_C,   c - 1,                 "Error(c)"),
-        ("Viscosidad x Velocidad",                 SS_AC,  (a - 1) * (c - 1),     "Error(c)"),
-        ("Desbalanceo x Velocidad",                SS_BC,  (b - 1) * (c - 1),     "Error(c)"),
-        ("Viscosidad x Desbalanceo x Velocidad",   SS_ABC, (a - 1) * (b - 1) * (c - 1), "Error(c)"),
+        ("Unbalance",                            SS_B,   b - 1,                 "Error(b)"),
+        ("Viscosity x Unbalance",               SS_AB,  (a - 1) * (b - 1),     "Error(b)"),
+        ("Error(b) = Rep x Unb | Visc",           SS_Eb,  a * (r - 1) * (b - 1), ""),
+        ("Speed",                              SS_C,   c - 1,                 "Error(c)"),
+        ("Viscosity x Speed",                 SS_AC,  (a - 1) * (c - 1),     "Error(c)"),
+        ("Unbalance x Speed",                SS_BC,  (b - 1) * (c - 1),     "Error(c)"),
+        ("Viscosity x Unbalance x Speed",   SS_ABC, (a - 1) * (b - 1) * (c - 1), "Error(c)"),
         ("Error(c)",                               SS_Ec,  a * b * (r - 1) * (c - 1), ""),
     ]
 
@@ -228,11 +240,11 @@ def anova_split_plot_bloques(Y):
     SS_Eb = SS_tot - (SS_R + SS_A + SS_Ea + SS_C + SS_AC)
 
     filas = [
-        ("Repeticion (bloque)",      SS_R,  r - 1,                 "Error(a)"),
-        ("Viscosidad",               SS_A,  a - 1,                 "Error(a)"),
+        ("Repetition (block)",      SS_R,  r - 1,                 "Error(a)"),
+        ("Viscosity",               SS_A,  a - 1,                 "Error(a)"),
         ("Error(a) = Rep x Visc",    SS_Ea, (r - 1) * (a - 1),     ""),
-        ("Velocidad",                SS_C,  c - 1,                 "Error(b)"),
-        ("Viscosidad x Velocidad",   SS_AC, (a - 1) * (c - 1),     "Error(b)"),
+        ("Speed",                SS_C,  c - 1,                 "Error(b)"),
+        ("Viscosity x Speed",   SS_AC, (a - 1) * (c - 1),     "Error(b)"),
         ("Error(b) = residual",      SS_Eb, a * (r - 1) * (c - 1), ""),
     ]
     gl_total = sum(f[2] for f in filas)
@@ -242,10 +254,10 @@ def anova_split_plot_bloques(Y):
 
 def _completar_tabla(filas, SS_tot):
     """Anade MS, F, p, contribucion y omega2 a una lista de (fuente, SS, gl, error)."""
-    tab = pd.DataFrame(filas, columns=["Fuente", "SS", "GL", "Error"])
-    tab["MS"] = tab["SS"] / tab["GL"]
+    tab = pd.DataFrame(filas, columns=["Source", "SS", "DF", "Error"])
+    tab["MS"] = tab["SS"] / tab["DF"]
     errores = {f.split(" =")[0].strip(): (ms, gl) for f, ms, gl, e
-               in zip(tab["Fuente"], tab["MS"], tab["GL"], tab["Error"]) if not e}
+               in zip(tab["Source"], tab["MS"], tab["DF"], tab["Error"]) if not e}
 
     F, P, GLD, OM = [], [], [], []
     for _, fila in tab.iterrows():
@@ -256,11 +268,11 @@ def _completar_tabla(filas, SS_tot):
         ms_e, gl_e = errores[e]
         f = fila["MS"] / ms_e
         F.append(f)
-        P.append(float(stats.f.sf(f, fila["GL"], gl_e)))
+        P.append(float(stats.f.sf(f, fila["DF"], gl_e)))
         GLD.append(gl_e)
-        OM.append(100.0 * max(fila["SS"] - fila["GL"] * ms_e, 0.0) / (SS_tot + ms_e))
-    tab["GL_denominador"], tab["F"], tab["p"] = GLD, F, P
-    tab["Contribucion_SS_%"] = 100.0 * tab["SS"] / SS_tot
+        OM.append(100.0 * max(fila["SS"] - fila["DF"] * ms_e, 0.0) / (SS_tot + ms_e))
+    tab["DF_denominator"], tab["F"], tab["p"] = GLD, F, P
+    tab["Contribution_SS_%"] = 100.0 * tab["SS"] / SS_tot
     tab["omega2_%"] = OM
     return tab
 
@@ -277,21 +289,21 @@ def anova_ingenuo(tab):
     Sirve unicamente para cuantificar cuanto se infla la significancia.
     """
     es_error = tab["Error"].fillna("") == ""
-    es_bloque = tab["Fuente"] == "Repeticion (bloque)"
+    es_bloque = tab["Source"] == "Repetition (block)"
     agrupadas = es_error | es_bloque
 
     ss_res = float(tab.loc[agrupadas, "SS"].sum())
-    gl_res = int(tab.loc[agrupadas, "GL"].sum())
+    gl_res = int(tab.loc[agrupadas, "DF"].sum())
     ms_res = ss_res / gl_res
 
     filas = []
     for _, fila in tab.loc[~agrupadas].iterrows():
         F = fila["MS"] / ms_res
-        filas.append({"Fuente": fila["Fuente"], "SS": fila["SS"], "GL": fila["GL"],
-                      "MS": fila["MS"], "GL_denominador": gl_res, "F": F,
-                      "p": float(stats.f.sf(F, fila["GL"], gl_res))})
-    filas.append({"Fuente": "Residual (agrupado)", "SS": ss_res, "GL": gl_res,
-                  "MS": ms_res, "GL_denominador": np.nan, "F": np.nan, "p": np.nan})
+        filas.append({"Source": fila["Source"], "SS": fila["SS"], "DF": fila["DF"],
+                      "MS": fila["MS"], "DF_denominator": gl_res, "F": F,
+                      "p": float(stats.f.sf(F, fila["DF"], gl_res))})
+    filas.append({"Source": "Residual (pooled)", "SS": ss_res, "DF": gl_res,
+                  "MS": ms_res, "DF_denominator": np.nan, "F": np.nan, "p": np.nan})
     return pd.DataFrame(filas)
 
 
@@ -305,16 +317,16 @@ def componentes_varianza(tab, forma):
     que hay bajo el, es decir el producto de los niveles de los factores anidados
     por debajo.
     """
-    idx = {f: i for i, f in enumerate(tab["Fuente"])}
+    idx = {f: i for i, f in enumerate(tab["Source"])}
     if len(forma) == 4:
         r, a, b, c = forma
-        estratos = [("Error(a) = Rep x Visc", "Parcela grande (montaje del aceite)", b * c),
-                    ("Error(b) = Rep x Desb | Visc", "Subparcela (montaje del desbalanceo)", c),
-                    ("Error(c)", "Sub-subparcela (barrido de velocidad)", 1)]
+        estratos = [("Error(a) = Rep x Visc", "Whole plot (oil mounting)", b * c),
+                    ("Error(b) = Rep x Unb | Visc", "Subplot (unbalance mounting)", c),
+                    ("Error(c)", "Sub-subplot (speed sweep)", 1)]
     else:
         r, a, c = forma
-        estratos = [("Error(a) = Rep x Visc", "Parcela grande (montaje del aceite)", c),
-                    ("Error(b) = residual", "Subparcela (barrido de velocidad)", 1)]
+        estratos = [("Error(a) = Rep x Visc", "Whole plot (oil mounting)", c),
+                    ("Error(b) = residual", "Subplot (speed sweep)", 1)]
 
     ms = [tab.loc[idx[f], "MS"] for f, _, _ in estratos]
     var = []
@@ -325,8 +337,8 @@ def componentes_varianza(tab, forma):
             var.append(max(ms[k], 0.0))
     tot = sum(var) or 1.0
     return pd.DataFrame([
-        {"Estrato": nombre, "MS": ms[k], "Varianza": var[k],
-         "Porcentaje": 100 * var[k] / tot}
+        {"Stratum": nombre, "MS": ms[k], "Variance": var[k],
+         "Percentage": 100 * var[k] / tot}
         for k, (_, nombre, _) in enumerate(estratos)])
 
 
@@ -346,9 +358,9 @@ def tukey_viscosidad(Y, tab, viscs, alfa=0.05):
         r, a, c = Y.shape
         n = r * c
         medias = Y.mean(axis=(0, 2))
-    idx = {f: i for i, f in enumerate(tab["Fuente"])}
+    idx = {f: i for i, f in enumerate(tab["Source"])}
     ms_e = tab.loc[idx["Error(a) = Rep x Visc"], "MS"]
-    gl_e = tab.loc[idx["Error(a) = Rep x Visc"], "GL"]
+    gl_e = tab.loc[idx["Error(a) = Rep x Visc"], "DF"]
     q = float(stats.studentized_range.ppf(1 - alfa, a, gl_e))
     hsd = q * np.sqrt(ms_e / n)
 
@@ -359,10 +371,10 @@ def tukey_viscosidad(Y, tab, viscs, alfa=0.05):
             t = abs(d) / np.sqrt(2 * ms_e / n)
             p = float(stats.studentized_range.sf(t * np.sqrt(2), a, gl_e))
             filas.append({
-                "Comparacion": f"ISO {viscs[i]} - ISO {viscs[j]}",
-                "Diferencia": d, "HSD_95": hsd,
-                "IC_inf": d - hsd, "IC_sup": d + hsd,
-                "p_Tukey": p, "Significativa": "SI" if abs(d) > hsd else "no",
+                "Comparison": f"ISO {viscs[i]} - ISO {viscs[j]}",
+                "Difference": d, "HSD_95": hsd,
+                "CI_low": d - hsd, "CI_high": d + hsd,
+                "p_Tukey": p, "Significant": "yes" if abs(d) > hsd else "no",
             })
     return pd.DataFrame(filas), medias, ms_e, gl_e, n
 
@@ -377,20 +389,22 @@ def _fmt_p(p):
     return "<0.001" if p < 0.001 else f"{p:.3f}"
 
 
+def _rejilla_sensores(fmt, relacion=0.80):
+    """2x2 grid of panels, one per probe."""
+    fig, axes = plt.subplots(2, 2, figsize=comun.tam_figura(fmt, relacion),
+                             constrained_layout=True)
+    return fig, list(axes.ravel())
+
+
 def barras_por_sensor(ax, categorias, valores, rayado=None, ancho_grupo=0.82):
     """
-    Barras agrupadas con los 4 sensores en unos MISMOS ejes.
+    Grouped bars with the four probes on the SAME axes: one bar per probe for
+    every category on the X axis.
 
-    Para cada categoria del eje X se dibuja una barra por sensor, de modo que
-    los 4 proximitores se comparan directamente en la misma figura en vez de
-    repartirse en un panel cada uno.
-
-      categorias : etiquetas del eje X
-      valores    : {sensor: [valor por categoria]}
-      rayado     : {sensor: [bool]} -> las marcadas se dibujan con trama, que se
-                   usa para senalar "no significativo"
-
-    Devuelve las posiciones de los grupos.
+      categorias : X axis labels
+      valores    : {sensor: [value per category]}
+      rayado     : {sensor: [bool]} -> hatched bars, used to flag
+                   "not significant"
     """
     sensores = [s for s in config.SENSORES if s in valores]
     n = len(sensores)
@@ -403,8 +417,7 @@ def barras_por_sensor(ax, categorias, valores, rayado=None, ancho_grupo=0.82):
         for i, (v, t) in enumerate(zip(valores[sensor], tramas)):
             ax.bar(x[i] + desplazamiento, v, ancho * 0.92,
                    color=config.COLOR_SENSOR.get(sensor, "#888888"),
-                   edgecolor="black", linewidth=0.4,
-                   hatch="///" if t else None, zorder=2)
+                   edgecolor="black", hatch="///" if t else None, zorder=2)
 
     ax.set_xticks(x)
     ax.set_xlim(-0.5, len(categorias) - 0.5)
@@ -412,96 +425,145 @@ def barras_por_sensor(ax, categorias, valores, rayado=None, ancho_grupo=0.82):
     return x
 
 
-def leyenda_sensores(fig, extra_handles=(), ncol=None, y=-0.02):
-    """Leyenda comun de los 4 sensores, fuera de los ejes."""
+def leyenda_sensores(fig, extra_handles=(), y=-0.02, ax=None, loc="upper right"):
+    """
+    Shared legend for the four probes.
+
+    With `ax` it goes INSIDE that axes, which is what keeps it clear of long
+    rotated tick labels; otherwise it sits below the figure.
+    """
     handles = [Patch(facecolor=config.COLOR_SENSOR[s], edgecolor="black",
-                     linewidth=0.4, label=s) for s in config.SENSORES]
+                     label=s) for s in config.SENSORES]
     handles += list(extra_handles)
-    fig.legend(handles=handles, loc="lower center",
-               ncol=ncol or len(handles), frameon=False, fontsize=10,
-               bbox_to_anchor=(0.5, y))
+    if ax is not None:
+        ax.legend(handles=handles, loc=loc, ncol=2, framealpha=0.9)
+    else:
+        fig.legend(handles=handles, loc="lower center", ncol=len(handles),
+                   frameon=False, bbox_to_anchor=(0.5, y))
 
 
-def fig_contribucion(tablas, ruta, extra=""):
-    """Contribucion de cada fuente a la SS, con los 4 sensores en unos ejes."""
-    # Las fuentes se leen de la propia tabla: asi la figura vale igual para el
-    # diseno completo (11 fuentes) y para el reducido de un solo desbalanceo (6).
-    fuentes = [f for f in tablas[config.SENSORES[0]]["Fuente"]
-               if f != "Repeticion (bloque)"]
+# ============================================================
+# FIGURES
+# ============================================================
+
+def fig_contribucion(tablas, ruta, fmt, extra=""):
+    """Share of the total sum of squares taken by each source."""
+    # Sources are read from the table itself, so the figure works for the full
+    # design (11 sources) and for the reduced one-unbalance design (6).
+    fuentes = [f for f in tablas[config.SENSORES[0]]["Source"]
+               if f != "Repetition (block)"]
     etiquetas = [ETIQUETAS.get(f, f) for f in fuentes]
 
     valores, rayado = {}, {}
     for sensor in config.SENSORES:
-        t = tablas[sensor].set_index("Fuente")
-        valores[sensor] = [float(t.loc[f, "Contribucion_SS_%"]) for f in fuentes]
-        # Trama en las barras que NO son significativas (y en los estratos de
-        # error, que no se contrastan contra nada).
+        t = tablas[sensor].set_index("Source")
+        valores[sensor] = [float(t.loc[f, "Contribution_SS_%"]) for f in fuentes]
         rayado[sensor] = [not (np.isfinite(t.loc[f, "p"]) and t.loc[f, "p"] < 0.05)
                           for f in fuentes]
 
-    fig, ax = plt.subplots(figsize=(16, 7), constrained_layout=True)
-    barras_por_sensor(ax, etiquetas, valores, rayado)
-    ax.set_xticklabels(etiquetas, rotation=45, ha="right", fontsize=10)
-    ax.set_ylabel("Contribucion a la SS total (%)", fontsize=11)
-
+    trama = Patch(facecolor="white", edgecolor="black", hatch="///",
+                  label="not significant")
     diseno = "split-split-plot" if "Error(c)" in fuentes else "split-plot"
-    fig.suptitle(f"Descomposicion de la variabilidad — {diseno}{extra}\n"
-                 "los 4 proximitores superpuestos · barra rayada = no "
-                 "significativa al 5 % con su termino de error",
-                 fontsize=14, fontweight="bold")
-    leyenda_sensores(fig, [Patch(facecolor="white", edgecolor="black",
-                                 hatch="///", label="no significativo")])
-    fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
+
+    if PANELES_POR_SENSOR:
+        ymax = max(max(v) for v in valores.values()) * 1.12
+        fig, axes = _rejilla_sensores(fmt, 0.85)
+        for ax, sensor in zip(axes, config.SENSORES):
+            ax.bar(range(len(fuentes)), valores[sensor],
+                   color=config.COLOR_SENSOR[sensor], edgecolor="black",
+                   hatch=None, zorder=2)
+            for i, t in enumerate(rayado[sensor]):
+                if t:
+                    ax.patches[i].set_hatch("///")
+                    ax.patches[i].set_facecolor("white")
+            ax.set_title(sensor, fontweight="bold")
+            ax.set_ylim(0, ymax)
+            ax.set_xticks(range(len(fuentes)))
+            ax.set_xticklabels(etiquetas, rotation=45, ha="right")
+            ax.grid(axis="y", ls="--", alpha=0.4)
+            ax.set_ylabel("Contribution to total SS (%)")
+        fig.legend(handles=[trama], loc="lower center", frameon=False,
+                   bbox_to_anchor=(0.5, -0.02))
+    else:
+        fig, ax = plt.subplots(figsize=comun.tam_figura(fmt, 0.45),
+                               constrained_layout=True)
+        barras_por_sensor(ax, etiquetas, valores, rayado)
+        ax.set_xticklabels(etiquetas, rotation=45, ha="right")
+        ax.set_ylabel("Contribution to total SS (%)")
+        leyenda_sensores(fig, [trama], ax=ax)
+
+    fig.suptitle(f"Variability decomposition — {diseno}{extra}\n"
+                 "hatched bar = not significant at 5 % with its own error term",
+                 fontweight="bold")
+    fig.savefig(ruta, dpi=fmt["dpi"])
     plt.close(fig)
 
 
-def fig_comparacion(tablas, ingenuos, ruta, extra=""):
-    """Lo que cambia al respetar el diseno: F y p de cada efecto, ambos modelos."""
-    fuentes = [f for f in ingenuos[config.SENSORES[0]]["Fuente"]
-               if f != "Residual (agrupado)"]
+def fig_comparacion(tablas, ingenuos, ruta, fmt, extra=""):
+    """What changes when the design is respected: evidence under both models."""
+    fuentes = [f for f in ingenuos[config.SENSORES[0]]["Source"]
+               if f != "Residual (pooled)"]
     et = [ETIQUETAS.get(f, f) for f in fuentes]
-    x = np.arange(len(fuentes))
 
-    # Un panel por MODELO (no por sensor): en cada uno los 4 proximitores
-    # aparecen juntos, que es lo que permite compararlos de un vistazo.
-    fig, axes = plt.subplots(1, 2, figsize=(19, 7), constrained_layout=True,
-                             sharey=True)
-    for ax, (titulo, fuente) in zip(
-            axes, [("ANOVA ingenuo — todo contra el residual", ingenuos),
-                   ("split-plot — cada efecto con SU error", tablas)]):
-        valores = {}
-        for sensor in config.SENSORES:
-            t = fuente[sensor].set_index("Fuente")
-            valores[sensor] = [-np.log10(max(float(t.loc[f, "p"]), 1e-300))
-                               for f in fuentes]
-        barras_por_sensor(ax, et, valores)
-        ax.axhline(-np.log10(0.05), color="black", ls="--", lw=1.4)
-        ax.text(-0.45, -np.log10(0.05), "p = 0.05", va="bottom", fontsize=9)
-        # Escala symlog: la zona decisiva (p entre 1 y 0.001) queda lineal y
-        # legible, y los p astronomicos del modelo ingenuo no la aplastan.
+    def _ejes(ax):
+        ax.axhline(-np.log10(0.05), color="black", ls="--")
+        # symlog: the decisive band (p from 1 to 0.001) stays linear and legible,
+        # and the astronomical p values of the naive model do not squash it.
         ax.set_yscale("symlog", linthresh=3.0, linscale=1.4)
         ax.set_ylim(0, 400)
         ax.set_yticks([0, 1, 2, 3, 10, 100])
         ax.set_yticklabels(["0", "1", "2", "3", "10", "100"])
-        ax.set_title(titulo, fontweight="bold")
-        ax.set_xticklabels(et, rotation=45, ha="right", fontsize=9)
-    axes[0].set_ylabel("evidencia   -log10(p)   [escala symlog]")
+        ax.set_xticklabels(et, rotation=45, ha="right")
+        ax.grid(axis="y", ls="--", alpha=0.4)
 
-    fig.suptitle(f"Consecuencia de respetar el diseno de parcelas subdivididas{extra}\n"
-                 "el panel derecho es la evidencia REAL; el izquierdo, la que se "
-                 "obtiene si se ignora la estructura del ensayo",
-                 fontsize=14, fontweight="bold")
-    leyenda_sensores(fig)
-    fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
+    modelos = [("Naive ANOVA — everything against the residual", ingenuos),
+               ("Split-plot — each effect with its own error", tablas)]
+
+    if PANELES_POR_SENSOR:
+        fig, axes = plt.subplots(2, 4, figsize=comun.tam_figura(fmt, 0.62),
+                                 constrained_layout=True, sharey=True)
+        for fila, (titulo, fuente) in enumerate(modelos):
+            for col, sensor in enumerate(config.SENSORES):
+                ax = axes[fila, col]
+                t = fuente[sensor].set_index("Source")
+                ax.bar(range(len(fuentes)),
+                       [-np.log10(max(float(t.loc[f, "p"]), 1e-300)) for f in fuentes],
+                       color=config.COLOR_SENSOR[sensor], edgecolor="black",
+                       zorder=2)
+                ax.set_xticks(range(len(fuentes)))
+                _ejes(ax)
+                if fila == 0:
+                    ax.set_title(sensor, fontweight="bold")
+                if col == 0:
+                    ax.set_ylabel(f"{'naive' if fila == 0 else 'correct'}\n"
+                                  "evidence  -log10(p)")
+    else:
+        fig, axes = plt.subplots(1, 2, figsize=comun.tam_figura(fmt, 0.44),
+                                 constrained_layout=True, sharey=True)
+        for ax, (titulo, fuente) in zip(axes, modelos):
+            valores = {}
+            for sensor in config.SENSORES:
+                t = fuente[sensor].set_index("Source")
+                valores[sensor] = [-np.log10(max(float(t.loc[f, "p"]), 1e-300))
+                                   for f in fuentes]
+            barras_por_sensor(ax, et, valores)
+            _ejes(ax)
+            ax.set_title(titulo, fontweight="bold")
+        axes[0].set_ylabel("evidence   -log10(p)   [symlog scale]")
+        leyenda_sensores(fig)
+
+    fig.suptitle(f"Effect of respecting the split-plot design{extra}\n"
+                 "the right-hand side is the REAL evidence; the left-hand side "
+                 "is what you get by ignoring the design",
+                 fontweight="bold")
+    fig.savefig(ruta, dpi=fmt["dpi"])
     plt.close(fig)
 
 
-def fig_efecto_viscosidad(resultados, viscs, ruta, unidad, extra=""):
-    """
-    Medias por aceite con el intervalo del error de parcela, los 4 sensores en
-    unos mismos ejes: X = sensor, una barra por aceite dentro de cada sensor.
-    """
-    fig, ax = plt.subplots(figsize=(13, 6), constrained_layout=True)
+def fig_efecto_viscosidad(resultados, viscs, ruta, fmt, unidad, extra=""):
+    """Mean per oil with the confidence interval of the whole-plot error."""
+    fig, ax = plt.subplots(figsize=comun.tam_figura(fmt, 0.52),
+                           constrained_layout=True)
     n_v = len(viscs)
     ancho = 0.80 / n_v
     x = np.arange(len(config.SENSORES), dtype=float)
@@ -514,224 +576,197 @@ def fig_efecto_viscosidad(resultados, viscs, ruta, unidad, extra=""):
             alturas.append(float(medias[k]))
             errores.append(float(stats.t.ppf(0.975, gl_e)) * np.sqrt(ms_e / n))
         ax.bar(x + (k - (n_v - 1) / 2) * ancho, alturas, ancho * 0.9,
-               yerr=errores, capsize=4, color=comun.color_condicion(v, 3),
-               edgecolor="black", linewidth=0.5, label=f"ISO {v}", zorder=2)
+               yerr=errores, capsize=3, color=comun.color_condicion(v, 3),
+               edgecolor="black", label=f"ISO {v}", zorder=2)
 
-    etiquetas = [f"{s}\n(p = {_fmt_p(resultados[s]['tabla'].set_index('Fuente').loc['Viscosidad', 'p'])})"
-                 for s in config.SENSORES]
+    etiquetas = [
+        f"{s}\n(p = {_fmt_p(resultados[s]['tabla'].set_index('Source').loc['Viscosity', 'p'])})"
+        for s in config.SENSORES]
     ax.set_xticks(x)
-    ax.set_xticklabels(etiquetas, fontsize=11)
-    ax.set_ylabel(unidad, fontsize=11)
+    ax.set_xticklabels(etiquetas)
+    ax.set_ylabel(unidad)
     ax.grid(axis="y", ls="--", alpha=0.4)
-    ax.legend(fontsize=10, title="aceite")
-    fig.suptitle(f"Efecto de la viscosidad{extra} — media por aceite en cada "
-                 f"proximitor,\ncon IC 95 % basado en Error(a)",
-                 fontsize=13, fontweight="bold")
-    fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
+    ax.legend(title="oil")
+    fig.suptitle(f"Effect of viscosity{extra} — mean per oil at each probe,\n"
+                 "95 % CI based on Error(a)", fontweight="bold")
+    fig.savefig(ruta, dpi=fmt["dpi"])
     plt.close(fig)
 
 
-def fig_interacciones(df, respuestas, viscs, desbs, vels, ruta, unidad, extra=""):
+def fig_interacciones(df, respuestas, viscs, desbs, vels, ruta, fmt, unidad,
+                      extra=""):
     """
-    Interaccion viscosidad x velocidad (arriba) y viscosidad x desbalanceo
-    (abajo), con los 4 proximitores superpuestos en unos mismos ejes.
-
-    Cada sensor se NORMALIZA por su propia media antes de superponerlo: P1Y y
-    P2Y difieren en un factor ~6 en micrometros, asi que sin normalizar el
-    sensor pequeno quedaria aplastado contra el eje y no se veria su forma. Al
-    normalizar, lo que se compara es la FORMA de la respuesta -- que es de lo
-    que habla una interaccion -- y no su magnitud absoluta (esa esta, en
-    micrometros, en p5_efecto_viscosidad.png).
-
-    Color = viscosidad · estilo de linea = sensor.
+    Viscosity x speed (top) and viscosity x unbalance (bottom), ONE PANEL PER
+    PROBE so each keeps its own amplitude scale in micrometres.
     """
     x = np.arange(len(vels))
-    # Con un solo desbalanceo la fila viscosidad x desbalanceo seria un unico
-    # punto por curva: no se dibuja.
+    # With a single unbalance level the bottom row would be one point per curve.
     dos_filas = len(desbs) >= 2
-    estilos = dict(zip(config.SENSORES, ["-", "--", "-.", ":"]))
-
-    fig, axes = plt.subplots(2 if dos_filas else 1, 1,
-                             figsize=(15, 9 if dos_filas else 5),
+    n_filas = 2 if dos_filas else 1
+    fig, axes = plt.subplots(n_filas, 4,
+                             figsize=comun.tam_figura(fmt, 0.30 * n_filas + 0.12),
                              constrained_layout=True, squeeze=False)
 
-    for sensor in config.SENSORES:
+    for j, sensor in enumerate(config.SENSORES):
         col = respuestas[sensor]
-        escala = float(df[col].mean()) or 1.0        # media global del sensor
+        ax = axes[0, j]
         for v in viscs:
-            sub = df[df["Viscosidad"] == v]
-            m = sub.groupby("Velocidad")[col].mean().reindex(vels).to_numpy()
-            axes[0, 0].plot(x, 100.0 * m / escala, lw=1.7,
-                            color=comun.color_condicion(v, 3),
-                            linestyle=estilos[sensor])
-            if dos_filas:
-                m2 = sub.groupby("Desbalanceo")[col].mean().reindex(desbs).to_numpy()
-                axes[1, 0].plot(range(len(desbs)), 100.0 * m2 / escala, "o-",
-                                lw=1.7, color=comun.color_condicion(v, 3),
-                                linestyle=estilos[sensor])
-
-    ax = axes[0, 0]
-    paso = 1 if len(vels) <= 8 else 1
-    ax.set_xticks(x[::paso])
-    ax.set_xticklabels([str(v) for v in vels[::paso]], rotation=60, fontsize=8)
-    ax.set_xlabel("Velocidad [rpm]", fontsize=10)
-    ax.set_ylabel("media normalizada (% de la media del sensor)", fontsize=10)
-    ax.set_title("Viscosidad x velocidad", fontweight="bold")
-    ax.grid(alpha=0.3, ls="--")
-
-    if dos_filas:
-        ax = axes[1, 0]
-        ax.set_xticks(range(len(desbs)))
-        ax.set_xticklabels([f"desbalanceo {d}" for d in desbs], fontsize=10)
-        ax.set_ylabel("media normalizada (% de la media del sensor)", fontsize=10)
-        ax.set_title("Viscosidad x desbalanceo", fontweight="bold")
+            m = df[df["Viscosity"] == v].groupby("Speed")[col].mean()
+            ax.plot(x, m.reindex(vels).to_numpy(),
+                    color=comun.color_condicion(v, 3), label=f"ISO {v}")
+        ax.set_title(sensor, fontweight="bold")
+        paso = 1 if len(vels) <= 6 else 3
+        ax.set_xticks(x[::paso])
+        ax.set_xticklabels([str(v) for v in vels[::paso]], rotation=60)
         ax.grid(alpha=0.3, ls="--")
+        ax.set_xlabel("Speed [rpm]")
+        if j == 0:
+            ax.set_ylabel(f"mean {unidad}")
 
-    n_rep = len(df["Repeticion"].unique())
-    handles = [Line2D([0], [0], color=comun.color_condicion(v, 3), lw=2.4,
+        if not dos_filas:
+            continue
+        ax = axes[1, j]
+        for v in viscs:
+            m = df[df["Viscosity"] == v].groupby("Unbalance")[col].mean()
+            ax.plot(range(len(desbs)), m.reindex(desbs).to_numpy(), "o-",
+                    color=comun.color_condicion(v, 3))
+        ax.set_xticks(range(len(desbs)))
+        ax.set_xticklabels([f"U{d}" for d in desbs])
+        ax.set_xlabel("Unbalance level")
+        ax.grid(alpha=0.3, ls="--")
+        if j == 0:
+            ax.set_ylabel(f"mean {unidad}")
+
+    handles = [Line2D([0], [0], color=comun.color_condicion(v, 3),
                       label=f"ISO {v}") for v in viscs]
-    handles += [Line2D([0], [0], color="#444444", lw=1.7, linestyle=estilos[s],
-                       label=s) for s in config.SENSORES]
     fig.legend(handles=handles, loc="lower center", ncol=len(handles),
-               frameon=False, fontsize=10, bbox_to_anchor=(0.5, -0.03))
+               frameon=False, bbox_to_anchor=(0.5, -0.03))
 
-    titulo = (f"Interacciones{extra} — los 4 proximitores superpuestos\n"
-              f"arriba: cada punto promedia {n_rep} rep x {len(desbs)} "
-              f"desbalanceo(s) = {n_rep * len(desbs)} valores")
+    n_rep = len(df["Repetition"].unique())
+    titulo = (f"Interactions{extra}\n"
+              f"top: viscosity x speed, each point averages {n_rep} rep x "
+              f"{len(desbs)} unbalance level(s)")
     if dos_filas:
-        titulo += (f"   |   abajo: {n_rep} rep x {len(vels)} velocidades = "
-                   f"{n_rep * len(vels)} valores")
-    fig.suptitle(titulo, fontsize=12, fontweight="bold")
-    fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
+        titulo += (f"   |   bottom: viscosity x unbalance, {n_rep} rep x "
+                   f"{len(vels)} speeds")
+    fig.suptitle(titulo, fontweight="bold")
+    fig.savefig(ruta, dpi=fmt["dpi"])
     plt.close(fig)
 
 
-def fig_viscosidad_por_grupo(resumen, viscs, ruta, unidad, que="tramo de velocidad"):
+def fig_viscosidad_por_grupo(resumen, viscs, ruta, fmt, unidad,
+                             que="speed band"):
     """
-    Como cambia el efecto de la viscosidad al recorrer los niveles de `que`.
-
-    `resumen` = lista de (nombre, {sensor: medias_por_viscosidad},
-                          {sensor: p_viscosidad}).
-
-    Arriba: media por aceite en cada nivel, con los 4 sensores superpuestos y
-    normalizados a su propia media (ver la nota de `fig_interacciones`).
-    Abajo: evidencia del efecto, barras agrupadas por sensor.
+    How the viscosity effect changes across the levels of `que`, ONE PANEL PER
+    PROBE (top: mean per oil in micrometres; bottom: evidence of the effect).
     """
-    nombres = [n.replace("_", " ") for n, _, _ in resumen]
+    nombres = [n for n, _, _ in resumen]
     x = np.arange(len(resumen), dtype=float)
-    estilos = dict(zip(config.SENSORES, ["-", "--", "-.", ":"]))
+    fig, axes = plt.subplots(2, 4, figsize=comun.tam_figura(fmt, 0.62),
+                             constrained_layout=True)
 
-    fig, axes = plt.subplots(2, 1, figsize=(15, 9), constrained_layout=True)
-
-    ax = axes[0]
-    for sensor in config.SENSORES:
-        todas = [m[sensor][iv] for _, m, _ in resumen for iv in range(len(viscs))]
-        escala = float(np.mean(todas)) or 1.0
+    for j, sensor in enumerate(config.SENSORES):
+        ax = axes[0, j]
         for iv, v in enumerate(viscs):
-            ax.plot(x, [100.0 * m[sensor][iv] / escala for _, m, _ in resumen],
-                    "o-", lw=1.8, ms=4, color=comun.color_condicion(v, 3),
-                    linestyle=estilos[sensor])
-    ax.set_xticks(x)
-    ax.set_xticklabels(nombres, fontsize=10)
-    ax.set_ylabel("media normalizada (% de la media del sensor)", fontsize=10)
-    ax.set_title("Media por aceite en cada nivel", fontweight="bold")
-    ax.grid(alpha=0.3, ls="--")
+            ax.plot(x, [m[sensor][iv] for _, m, _ in resumen], "o-",
+                    color=comun.color_condicion(v, 3), label=f"ISO {v}")
+        ax.set_title(sensor, fontweight="bold")
+        ax.set_xticks(x)
+        ax.set_xticklabels(nombres)
+        ax.grid(alpha=0.3, ls="--")
+        if j == 0:
+            ax.set_ylabel(f"mean {unidad}")
 
-    ax = axes[1]
-    valores, rayado = {}, {}
-    for sensor in config.SENSORES:
-        ps = [max(float(pp[sensor]), 1e-300) for _, _, pp in resumen]
-        valores[sensor] = [-np.log10(q) for q in ps]
-        rayado[sensor] = [q >= 0.05 for q in ps]
-    barras_por_sensor(ax, nombres, valores, rayado)
-    ax.axhline(-np.log10(0.05), color="black", ls="--", lw=1.4)
-    ax.text(-0.45, -np.log10(0.05), "p = 0.05", va="bottom", fontsize=9)
-    ax.set_xticklabels(nombres, fontsize=10)
-    ax.set_ylabel("evidencia  -log10(p)", fontsize=10)
-    ax.set_title("Evidencia del efecto de la viscosidad "
-                 "(barra rayada = no significativa)", fontweight="bold")
+        ax = axes[1, j]
+        ps = np.array([max(float(pp[sensor]), 1e-300) for _, _, pp in resumen])
+        ax.bar(x, -np.log10(ps),
+               color=[config.COLOR_SENSOR[sensor] if q < 0.05 else "white"
+                      for q in ps],
+               edgecolor="black",
+               hatch=["" if q < 0.05 else "///" for q in ps], zorder=2)
+        ax.axhline(-np.log10(0.05), color="black", ls="--")
+        ax.set_xticks(x)
+        ax.set_xticklabels(nombres)
+        ax.grid(axis="y", alpha=0.3, ls="--")
+        if j == 0:
+            ax.set_ylabel("evidence  -log10(p)")
 
-    handles = [Line2D([0], [0], color=comun.color_condicion(v, 3), lw=2.4,
+    handles = [Line2D([0], [0], color=comun.color_condicion(v, 3),
                       label=f"ISO {v}") for v in viscs]
-    handles += [Patch(facecolor=config.COLOR_SENSOR[s], edgecolor="black",
-                      linewidth=0.4, label=s) for s in config.SENSORES]
+    handles.append(Patch(facecolor="white", edgecolor="black", hatch="///",
+                         label="not significant"))
     fig.legend(handles=handles, loc="lower center", ncol=len(handles),
-               frameon=False, fontsize=10, bbox_to_anchor=(0.5, -0.03))
+               frameon=False, bbox_to_anchor=(0.5, -0.03))
 
-    n_sig = sum(1 for _, _, pp in resumen for s in config.SENSORES
-                if pp[s] < 0.05)
+    n_sig = sum(1 for _, _, pp in resumen for s in config.SENSORES if pp[s] < 0.05)
     n_tot = len(resumen) * len(config.SENSORES)
-    fig.suptitle(f"Efecto de la viscosidad segun el {que}\n"
-                 f"significativa en {n_sig} de {n_tot} casos "
-                 f"(sensor x nivel) · los 4 proximitores superpuestos",
-                 fontsize=14, fontweight="bold")
-    fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
+    sub = config.leyenda_grupos() if que == "speed band" else ""
+    fig.suptitle(f"Viscosity effect by {que} — significant in {n_sig} of "
+                 f"{n_tot} cases (probe x level)"
+                 + (f"\n{sub}" if sub else ""), fontweight="bold")
+    fig.savefig(ruta, dpi=fmt["dpi"])
     plt.close(fig)
 
 
-def fig_estratos(comps, ruta, extra=""):
-    """De donde viene la variabilidad: montaje del aceite / del desbalanceo / ruido."""
-    fig, ax = plt.subplots(figsize=(10, 5.5), constrained_layout=True)
-    estratos = comps[config.SENSORES[0]]["Estrato"].tolist()
+def fig_estratos(comps, ruta, fmt, extra=""):
+    """Where the random variability comes from, stratum by stratum."""
+    fig, ax = plt.subplots(figsize=comun.tam_figura(fmt, 0.48),
+                           constrained_layout=True)
+    estratos = comps[config.SENSORES[0]]["Stratum"].tolist()
     x = np.arange(len(config.SENSORES))
     abajo = np.zeros(len(config.SENSORES))
     colores = (["#8e44ad", "#2980b9", "#95a5a6"] if len(estratos) == 3
                else ["#8e44ad", "#95a5a6"])
     for i, e in enumerate(estratos):
-        v = np.array([comps[s].iloc[i]["Porcentaje"] for s in config.SENSORES])
+        v = np.array([comps[s].iloc[i]["Percentage"] for s in config.SENSORES])
         ax.bar(x, v, 0.55, bottom=abajo, label=e, color=colores[i],
-               edgecolor="black", linewidth=0.4)
+               edgecolor="black")
         abajo += v
     ax.set_xticks(x)
     ax.set_xticklabels(config.SENSORES)
-    ax.set_ylabel("% de la varianza aleatoria")
-    ax.set_title(f"Reparto de la variabilidad entre los estratos del diseno{extra}\n"
-                 "(cuanto mayor es el morado, mas caro es cada dato de viscosidad)",
-                 fontweight="bold")
-    ax.legend(fontsize=9, loc="lower right")
+    ax.set_ylabel("% of the random variance")
+    ax.set_title(f"Variance split across the design strata{extra}\n"
+                 "the larger the purple share, the more each viscosity "
+                 "observation costs", fontweight="bold")
+    ax.legend(loc="lower right")
     ax.grid(axis="y", ls="--", alpha=0.4)
-    fig.savefig(ruta, dpi=config.DPI, bbox_inches="tight")
+    fig.savefig(ruta, dpi=fmt["dpi"])
     plt.close(fig)
 
 
-# ============================================================
-# PROGRAMA
-# ============================================================
-
 def validar_diseno(reps, viscs, desbs, vels):
     """
-    Comprueba que hay niveles suficientes para que existan los tres estratos de
-    error. Sin al menos 2 repeticiones no hay Error(a) ni Error(b) y el analisis
-    de parcelas subdivididas es imposible.
+    Check there are enough levels for the three error strata to exist. With
+    fewer than 2 repetitions there is no Error(a) nor Error(b) and the
+    split-plot analysis is impossible.
     """
-    # El desbalanceo puede tener un solo nivel: en ese caso sale del modelo y el
-    # diseno se reduce a un split-plot de dos estratos (ver anova_split_plot_bloques).
+    # The unbalance factor may have a single level: it then drops out of the
+    # model and the design reduces to a two-stratum split-plot.
     problemas = []
-    for nombre, niveles, minimo in (("repeticiones (bloques)", reps, 2),
-                                    ("viscosidades", viscs, 2),
-                                    ("desbalanceos", desbs, 1),
-                                    ("velocidades", vels, 2)):
+    for nombre, niveles, minimo in (("repetitions (blocks)", reps, 2),
+                                    ("viscosities", viscs, 2),
+                                    ("unbalance levels", desbs, 1),
+                                    ("speeds", vels, 2)):
         if len(niveles) < minimo:
-            problemas.append(f"{len(niveles)} {nombre} (hacen falta >= {minimo})")
+            problemas.append(f"{len(niveles)} {nombre} (need >= {minimo})")
     if problemas:
         raise ValueError(
-            "el diseno no da para un ANOVA de parcelas subdivididas: "
-            + "; ".join(problemas)
-            + ". Con menos de 2 repeticiones no existen los terminos de error "
-              "Error(a) ni Error(b).")
+            "the design cannot support a split-plot ANOVA: " + "; ".join(problemas)
+            + ". With fewer than 2 repetitions the Error(a) and Error(b) terms "
+              "do not exist.")
 
 
-def analizar(df, respuestas, unidad, destino: Path, sufijo: str = "",
+def analizar(df, respuestas, unidad, destino: Path, fmt, sufijo: str = "",
              figuras: bool = True):
-    """Ejecuta el analisis completo y escribe tablas y figuras."""
-    reps = sorted(df["Repeticion"].unique())
-    viscs = sorted(df["Viscosidad"].unique())
-    desbs = sorted(df["Desbalanceo"].unique())
-    vels = sorted(df["Velocidad"].unique())
+    """Run the full analysis and write tables and figures."""
+    reps = sorted(df["Repetition"].unique())
+    viscs = sorted(df["Viscosity"].unique())
+    desbs = sorted(df["Unbalance"].unique())
+    vels = sorted(df["Speed"].unique())
     validar_diseno(reps, viscs, desbs, vels)
 
-    # Con >= 2 desbalanceos el diseno es split-split-plot; con uno solo el factor
-    # desaparece y queda un split-plot de dos estratos.
+    # With >= 2 unbalance levels the design is a split-split-plot; with a single
+    # level the factor disappears and a two-stratum split-plot remains.
     completo = len(desbs) >= 2
 
     tablas, ingenuos, comps, resultados, posthoc = {}, {}, {}, {}, []
@@ -755,45 +790,47 @@ def analizar(df, respuestas, unidad, destino: Path, sufijo: str = "",
     s = f"_{sufijo}" if sufijo else ""
 
     def _guardar(dic, nombre):
-        out = pd.concat([d.assign(Sensor=k) for k, d in dic.items()], ignore_index=True)
+        out = pd.concat([d.assign(Sensor=k) for k, d in dic.items()],
+                        ignore_index=True)
         out = out[["Sensor"] + [c for c in out.columns if c != "Sensor"]]
         out.to_csv(destino / nombre, index=False)
         return out
 
     _guardar(tablas, f"anova_split_plot{s}.csv")
-    _guardar(ingenuos, f"anova_ingenuo{s}.csv")
-    _guardar(comps, f"componentes_varianza{s}.csv")
+    _guardar(ingenuos, f"anova_naive{s}.csv")
+    _guardar(comps, f"variance_components{s}.csv")
     pd.concat(posthoc, ignore_index=True).to_csv(
-        destino / f"posthoc_viscosidad{s}.csv", index=False)
+        destino / f"posthoc_viscosity{s}.csv", index=False)
 
-    # comparacion resumida para la viscosidad
+    # condensed viscosity comparison
     filas = []
     for sensor in config.SENSORES:
-        c = tablas[sensor].set_index("Fuente").loc["Viscosidad"]
-        n_ = ingenuos[sensor].set_index("Fuente").loc["Viscosidad"]
+        c = tablas[sensor].set_index("Source").loc["Viscosity"]
+        n_ = ingenuos[sensor].set_index("Source").loc["Viscosity"]
         filas.append({
             "Sensor": sensor,
-            "F_correcto": c["F"], "gl_den_correcto": c["GL_denominador"],
-            "p_correcto": c["p"],
-            "F_ingenuo": n_["F"], "gl_den_ingenuo": n_["GL_denominador"],
-            "p_ingenuo": n_["p"],
-            "veces_F_inflada": n_["F"] / c["F"] if c["F"] else np.nan,
-            "significativa_correcto": "SI" if c["p"] < 0.05 else "no",
-            "significativa_ingenuo": "SI" if n_["p"] < 0.05 else "no",
+            "F_correct": c["F"], "DF_den_correct": c["DF_denominator"],
+            "p_correct": c["p"],
+            "F_naive": n_["F"], "DF_den_naive": n_["DF_denominator"],
+            "p_naive": n_["p"],
+            "F_inflation_factor": n_["F"] / c["F"] if c["F"] else np.nan,
+            "significant_correct": "yes" if c["p"] < 0.05 else "no",
+            "significant_naive": "yes" if n_["p"] < 0.05 else "no",
         })
     comparacion = pd.DataFrame(filas)
-    comparacion.to_csv(destino / f"comparacion_viscosidad{s}.csv", index=False)
+    comparacion.to_csv(destino / f"viscosity_comparison{s}.csv", index=False)
 
     if figuras:
-        extra = f" — {sufijo.replace('_', ' ')}" if sufijo else ""
-        fig_contribucion(tablas, destino / f"p5_contribucion{s}.png", extra)
+        extra = f" — {sufijo}" if sufijo else ""
+        fig_contribucion(tablas, destino / f"p5_contribution{s}.png", fmt, extra)
         fig_comparacion(tablas, ingenuos,
-                        destino / f"p5_ingenuo_vs_correcto{s}.png", extra)
+                        destino / f"p5_naive_vs_correct{s}.png", fmt, extra)
         fig_efecto_viscosidad(resultados, viscs,
-                              destino / f"p5_efecto_viscosidad{s}.png", unidad, extra)
+                              destino / f"p5_viscosity_effect{s}.png", fmt,
+                              unidad, extra)
         fig_interacciones(df, respuestas, viscs, desbs, vels,
-                          destino / f"p5_interacciones{s}.png", unidad, extra)
-        fig_estratos(comps, destino / f"p5_estratos_varianza{s}.png", extra)
+                          destino / f"p5_interactions{s}.png", fmt, unidad, extra)
+        fig_estratos(comps, destino / f"p5_variance_strata{s}.png", fmt, extra)
 
     medias = {sen: resultados[sen]["medias"] for sen in config.SENSORES}
     return (tablas, ingenuos, comparacion, comps,
@@ -801,159 +838,176 @@ def analizar(df, respuestas, unidad, destino: Path, sufijo: str = "",
 
 
 def main() -> int:
+    global PANELES_POR_SENSOR
     p = argparse.ArgumentParser(
-        description="Paso 5: ANOVA de parcelas subdivididas acorde al diseno.")
+        description="Step 5: split-plot ANOVA matched to the experimental design.")
     p.add_argument("--entrada", default="",
-                   help="def: <salida>/p3_fasores_compensados.txt")
+                   help="default: <salida>/p3_phasors_compensated.txt")
     p.add_argument("--salida", default=config.DIR_RESULTADOS)
-    p.add_argument("--respuesta", default="amp", choices=["amp", "fase"],
-                   help="Magnitud analizada (def: amp)")
+    p.add_argument("--respuesta", default="amp", choices=["amp", "phase"],
+                   help="analysed magnitude (default: amp)")
+    p.add_argument("--formato", default=config.FORMATO_POR_DEFECTO,
+                   choices=sorted(config.FORMATOS_FIGURA),
+                   help="figure size/typography preset (default: screen)")
+    p.add_argument("--paneles-por-sensor", dest="paneles", action="store_true",
+                   help="bar figures as a 2x2 grid, one panel per probe, "
+                        "instead of the four probes on shared axes")
     p.add_argument("--grupos-velocidad", dest="grupos", action="store_true",
-                   help="Repite el analisis dentro de cada tramo de velocidad")
+                   help="repeat the analysis inside each speed band")
     p.add_argument("--grupos-desbalanceo", dest="grupos_desb", action="store_true",
-                   help="Repite el analisis para cada nivel de desbalanceo por "
-                        "separado (el diseno se reduce a un split-plot)")
+                   help="repeat the analysis for each unbalance level separately "
+                        "(the design reduces to a split-plot)")
     args = p.parse_args()
+
+    PANELES_POR_SENSOR = args.paneles
+    fmt = comun.aplicar_formato(args.formato)
 
     salida = Path(args.salida).expanduser()
     entrada = Path(args.entrada).expanduser() if args.entrada \
         else salida / config.ARCHIVO_FASORES_COMP
     if not entrada.is_file():
-        print(f"ERROR: no existe {entrada}. Ejecuta antes p3_compensar_runout.py")
+        print(f"ERROR: {entrada} does not exist. Run p3_compensar_runout.py first.")
         return 1
 
     df = comun.leer_tabla(entrada)
     respuestas = {s: f"{s}_{args.respuesta}" for s in config.SENSORES}
-    unidad = "amplitud 1X [um]" if args.respuesta == "amp" else "fase [grados]"
+    unidad = "1X amplitude [um]" if args.respuesta == "amp" else "phase [deg]"
 
-    if args.respuesta == "fase":
-        print("!! AVISO: la fase es una variable CIRCULAR. Un ANAVA corriente sobre\n"
-              "   grados no es valido en general (359 y 1 distan 2 grados, no 358).\n"
-              "   Uselo solo si ha comprobado que ninguna condicion cruza el 0/360.\n")
+    if args.respuesta == "phase":
+        print("!! WARNING: phase is a CIRCULAR variable. An ordinary ANOVA on\n"
+              "   degrees is not valid in general (359 and 1 are 2 degrees\n"
+              "   apart, not 358). Use it only after checking that no condition\n"
+              "   crosses 0/360.\n")
 
     destino = salida / config.DIR_ESTADISTICA
     try:
         tablas, ingenuos, comparacion, comps, posthoc, _ = analizar(
-            df, respuestas, unidad, destino)
+            df, respuestas, unidad, destino, fmt)
     except ValueError as e:
         print(f"ERROR: {e}")
         return 1
 
-    # ---- informe ----
-    r = len(df["Repeticion"].unique()); a = len(df["Viscosidad"].unique())
-    b = len(df["Desbalanceo"].unique()); c = len(df["Velocidad"].unique())
-    print(f"Entrada : {entrada}  ({len(df)} filas)")
-    print(f"Diseno  : {r} bloques x {a} viscosidades x {b} desbalanceos x "
-          f"{c} velocidades = {r*a*b*c} observaciones\n")
+    r = len(df["Repetition"].unique()); a = len(df["Viscosity"].unique())
+    b = len(df["Unbalance"].unique()); c = len(df["Speed"].unique())
+    print(f"Input  : {entrada}  ({len(df)} rows)")
+    print(f"Design : {r} blocks x {a} viscosities x {b} unbalance levels x "
+          f"{c} speeds = {r*a*b*c} observations")
+    print(f"Figures: format '{args.formato}' "
+          f"({config.FORMATOS_FIGURA[args.formato]['ancho']:g} in wide, "
+          f"{config.FORMATOS_FIGURA[args.formato]['dpi']} dpi), layout "
+          f"{'one panel per probe' if args.paneles else 'probes on shared axes'}\n")
 
     print("=" * 78)
-    print(f"ANOVA split-split-plot — sensor {config.SENSORES[0]} (ejemplo)")
+    print(f"SPLIT-PLOT ANOVA — sensor {config.SENSORES[0]} (example)")
     print("=" * 78)
     t = tablas[config.SENSORES[0]]
-    print(t[["Fuente", "SS", "GL", "MS", "GL_denominador", "F", "p",
-             "Contribucion_SS_%"]]
+    print(t[["Source", "SS", "DF", "MS", "DF_denominator", "F", "p",
+             "Contribution_SS_%"]]
           .to_string(index=False, float_format=lambda v: f"{v:10.4g}"))
 
     print("\n" + "=" * 78)
-    print("EFECTO DE LA VISCOSIDAD: contraste correcto frente al ingenuo")
+    print("VISCOSITY EFFECT: correct test vs naive test")
     print("=" * 78)
     print(comparacion.to_string(index=False, float_format=lambda v: f"{v:9.4g}"))
 
-    n_c = (comparacion["significativa_correcto"] == "SI").sum()
-    n_i = (comparacion["significativa_ingenuo"] == "SI").sum()
-    print(f"\nSensores con viscosidad significativa: {n_c}/4 con el error correcto, "
-          f"{n_i}/4 con el ANOVA ingenuo.")
-    infl = comparacion["veces_F_inflada"].replace([np.inf, -np.inf], np.nan).dropna()
+    n_c = (comparacion["significant_correct"] == "yes").sum()
+    n_i = (comparacion["significant_naive"] == "yes").sum()
+    print(f"\nSensors with a significant viscosity effect: {n_c}/4 with the "
+          f"correct error term, {n_i}/4 with the naive ANOVA.")
+    infl = comparacion["F_inflation_factor"].replace([np.inf, -np.inf], np.nan).dropna()
     if len(infl):
-        print(f"El ANOVA ingenuo multiplica la F de la viscosidad por un factor de "
-              f"{infl.min():.1f} a {infl.max():.1f}.")
-    print("La viscosidad se juzga con "
-          f"{int(comparacion['gl_den_correcto'].iloc[0])} gl en el denominador, "
-          f"no con {int(comparacion['gl_den_ingenuo'].iloc[0])}.")
+        print(f"The naive ANOVA multiplies the viscosity F by a factor of "
+              f"{infl.min():.1f} to {infl.max():.1f}.")
+    print(f"Viscosity is judged with "
+          f"{int(comparacion['DF_den_correct'].iloc[0])} denominator df, "
+          f"not {int(comparacion['DF_den_naive'].iloc[0])}.")
 
     print("\n" + "=" * 78)
-    print("COMPARACIONES ENTRE ACEITES (Tukey con Error(a))")
+    print("PAIRWISE COMPARISONS BETWEEN OILS (Tukey with Error(a))")
     print("=" * 78)
     print(posthoc.to_string(index=False, float_format=lambda v: f"{v:9.4g}"))
 
-    # ---- opcional: por tramos de velocidad ----
+    # ---- optional: per speed band ----
     if args.grupos:
         print("\n" + "=" * 78)
-        print("ANALISIS POR TRAMOS DE VELOCIDAD")
+        print("ANALYSIS BY SPEED BAND")
         print("=" * 78)
+        print(config.leyenda_grupos() + "\n")
         resumen = []
         for nombre, vels in GRUPOS_VELOCIDAD.items():
-            sub = df[df["Velocidad"].isin(vels)]
-            disponibles = sorted(sub["Velocidad"].unique())
+            sub = df[df["Speed"].isin(vels)]
+            disponibles = sorted(sub["Speed"].unique())
             if len(disponibles) < 2:
-                print(f"  {nombre}: menos de 2 velocidades disponibles, se omite.")
+                print(f"  {nombre}: fewer than 2 speeds available, skipped.")
                 continue
             try:
                 _, _, cmp_g, _, _, medias_g = analizar(
-                    sub, respuestas, unidad, destino, nombre)
+                    sub, respuestas, unidad, destino, fmt, nombre)
             except ValueError as e:
                 print(f"  {nombre}: {e}")
                 continue
-            sig = (cmp_g["significativa_correcto"] == "SI").sum()
-            print(f"  {nombre} ({len(disponibles)} rpm): viscosidad significativa "
-                  f"en {sig}/4 sensores  (p min = {cmp_g['p_correcto'].min():.4g})")
+            sig = (cmp_g["significant_correct"] == "yes").sum()
+            print(f"  {nombre} ({len(disponibles)} rpm): viscosity significant "
+                  f"in {sig}/4 sensors  (min p = {cmp_g['p_correct'].min():.4g})")
             resumen.append((nombre, medias_g,
-                            dict(zip(cmp_g["Sensor"], cmp_g["p_correcto"]))))
+                            dict(zip(cmp_g["Sensor"], cmp_g["p_correct"]))))
 
         if len(resumen) >= 2:
-            viscs = sorted(df["Viscosidad"].unique())
+            viscs = sorted(df["Viscosity"].unique())
             fig_viscosidad_por_grupo(
-                resumen, viscs, destino / "p5_viscosidad_por_grupo.png", unidad)
-            print(f"\n  Figura comparativa entre tramos: "
-                  f"{destino / 'p5_viscosidad_por_grupo.png'}")
+                resumen, viscs, destino / "p5_viscosity_by_speed_band.png", fmt,
+                unidad, que="speed band")
+            print(f"\n  Cross-band figure: "
+                  f"{destino / 'p5_viscosity_by_speed_band.png'}")
 
-    # ---- opcional: cada desbalanceo por separado ----
+    # ---- optional: per unbalance level ----
     if args.grupos_desb:
         print("\n" + "=" * 78)
-        print("ANALISIS POR NIVEL DE DESBALANCEO")
+        print("ANALYSIS BY UNBALANCE LEVEL")
         print("=" * 78)
-        print("Al fijar el desbalanceo, ese factor sale del modelo: el diseno pasa\n"
-              "de split-split-plot a split-plot (bloque -> viscosidad -> velocidad).\n"
-              "La viscosidad sigue contrastandose con Error(a) = Rep x Visc y 4 gl:\n"
-              "separar por desbalanceo NO aporta grados de libertad al aceite.\n")
+        print("Fixing the unbalance removes that factor from the model: the\n"
+              "design goes from split-split-plot to split-plot (block ->\n"
+              "viscosity -> speed). Viscosity is still tested against\n"
+              "Error(a) = Rep x Visc with 4 df: splitting by unbalance adds no\n"
+              "degrees of freedom for the oil.\n")
         resumen_d = []
-        for d in sorted(df["Desbalanceo"].unique()):
-            sub = df[df["Desbalanceo"] == d]
-            nombre = f"Desbalanceo_{int(d)}"
+        for d in sorted(df["Unbalance"].unique()):
+            sub = df[df["Unbalance"] == d]
+            nombre = f"U{int(d)}"
             try:
                 _, _, cmp_d, _, _, medias_d = analizar(
-                    sub, respuestas, unidad, destino, nombre)
+                    sub, respuestas, unidad, destino, fmt, nombre)
             except ValueError as e:
                 print(f"  {nombre}: {e}")
                 continue
-            sig = (cmp_d["significativa_correcto"] == "SI").sum()
-            print(f"  {nombre}: viscosidad significativa en {sig}/4 sensores  "
-                  f"(p min = {cmp_d['p_correcto'].min():.4g})")
+            sig = (cmp_d["significant_correct"] == "yes").sum()
+            print(f"  {nombre}: viscosity significant in {sig}/4 sensors  "
+                  f"(min p = {cmp_d['p_correct'].min():.4g})")
             resumen_d.append((nombre, medias_d,
-                              dict(zip(cmp_d["Sensor"], cmp_d["p_correcto"]))))
+                              dict(zip(cmp_d["Sensor"], cmp_d["p_correct"]))))
 
         if len(resumen_d) >= 2:
-            viscs = sorted(df["Viscosidad"].unique())
+            viscs = sorted(df["Viscosity"].unique())
             fig_viscosidad_por_grupo(
-                resumen_d, viscs, destino / "p5_viscosidad_por_desbalanceo.png",
-                unidad, que="nivel de desbalanceo")
-            print(f"\n  Figura comparativa entre desbalanceos: "
-                  f"{destino / 'p5_viscosidad_por_desbalanceo.png'}")
+                resumen_d, viscs, destino / "p5_viscosity_by_unbalance.png", fmt,
+                unidad, que="unbalance level")
+            print(f"\n  Cross-level figure: "
+                  f"{destino / 'p5_viscosity_by_unbalance.png'}")
 
-    # ---- resumen de lo que se ha hecho y de lo que no ----
+    # ---- what ran and what did not ----
     print("\n" + "=" * 78)
-    print("ANALISIS OPCIONALES")
+    print("OPTIONAL ANALYSES")
     print("=" * 78)
     for activo, etiqueta, bandera in (
-            (args.grupos, "por tramos de velocidad", "--grupos-velocidad"),
-            (args.grupos_desb, "por nivel de desbalanceo", "--grupos-desbalanceo")):
+            (args.grupos, "by speed band", "--grupos-velocidad"),
+            (args.grupos_desb, "by unbalance level", "--grupos-desbalanceo")):
         if activo:
-            print(f"  [x] {etiqueta:26s} ejecutado")
+            print(f"  [x] {etiqueta:22s} done")
         else:
-            print(f"  [ ] {etiqueta:26s} NO ejecutado — anade {bandera}")
+            print(f"  [ ] {etiqueta:22s} NOT done — add {bandera}")
 
     n = len(list(destino.glob("*")))
-    print(f"\n{n} archivos en: {destino}")
+    print(f"\n{n} files in: {destino}")
     return 0
 
 

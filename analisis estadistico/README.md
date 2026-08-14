@@ -1,440 +1,431 @@
-# Análisis estadístico de la respuesta dinámica del rotor
+# Statistical analysis of the rotor dynamic response
 
-Pipeline completo desde los `.xlsx` de proximitores hasta el análisis de
-significancia de la viscosidad, respetando el diseño de parcelas subdivididas
-del ensayo.
+Full pipeline from the proximity-probe `.xlsx` files to the significance
+analysis of oil viscosity, respecting the split-plot structure of the
+experiment.
 
-| Script | Paso | Qué hace |
+| Script | Step | What it does |
 |---|---|---|
-| `p1_extraer_fasores.py` | 1 | Extrae el fasor 1X (amplitud + fase) de cada ensayo y velocidad, analizando la estabilización temporal |
-| `p2_graficar_fasores.py` | 2 | 12 figuras 2×2 de amplitud y fase frente a la velocidad |
-| `p3_compensar_runout.py` | 3 | Resta vectorial del fasor de slow roll |
-| `p4_graficar_compensados.py` | 4 | Las mismas 12 figuras con los datos ya compensados |
-| `p5_anova_split_plot.py` | 5 | ANOVA de parcelas subdivididas + comparación con el análisis ingenuo |
-| `p6_graficar_pvalores.py` | 6 | Gráficas del **valor p** de cada factor, con el umbral de significancia |
-| `ejecutar_todo.py` | — | Ejecuta los 6 pasos en orden |
-| `config.py` / `comun.py` | — | Constantes y utilidades compartidas |
-| `_generar_datos_prueba.py` | — | (opcional) genera `.xlsx` sintéticos para probar el pipeline |
+| `p1_extraer_fasores.py` | 1 | Extracts the 1X phasor (amplitude + phase) of every run and speed, after a stabilisation analysis |
+| `p2_graficar_fasores.py` | 2 | Twelve 2x2 figures of amplitude and phase against speed |
+| `p3_compensar_runout.py` | 3 | Vector subtraction of the slow-roll phasor |
+| `p4_graficar_compensados.py` | 4 | The same twelve figures on the compensated data |
+| `p5_anova_split_plot.py` | 5 | Split-plot ANOVA + comparison against the naive analysis |
+| `p6_graficar_pvalores.py` | 6 | p-value figures with the significance threshold |
+| `ejecutar_todo.py` | — | Runs all six steps in order |
+| `config.py` / `comun.py` | — | Shared constants and helpers |
+| `_generar_datos_prueba.py` | — | (optional) synthetic `.xlsx` files to exercise the pipeline |
 
-> **[`GUIA_RESULTADOS_P5.md`](GUIA_RESULTADOS_P5.md)** — referencia detallada de los
-> 51 archivos que produce el paso 5: qué contiene cada CSV columna por columna y
-> fila por fila, qué muestra cada figura, y qué archivo responde a cada pregunta.
+> **[`GUIA_RESULTADOS_P5.md`](GUIA_RESULTADOS_P5.md)** — reference for every file
+> step 5 produces: each CSV column by column and row by row, what each figure
+> shows, and which file answers which question.
 
 ---
 
-## Ejecución
+## Running it
 
-La carpeta tiene un espacio en el nombre, así que en Windows hay que **entrecomillar
-la ruta**:
+The folder name contains a space, so on Windows the path must be **quoted**:
 
 ```bat
-REM todo el proceso de una vez
+REM the whole pipeline at once
 python "C:\Users\Owner\Documents\git\psd\dsp\analisis estadistico\ejecutar_todo.py" ^
        --entrada "C:\Users\Owner\Documents\BD\All data" ^
-       --salida  "C:\Users\Owner\Documents\BD\resultados_analisis" ^
+       --salida  "D:\wherever\you\want\results" ^
        --desenvolver --grupos-velocidad --grupos-desbalanceo
 ```
 
-Paso a paso:
+Step by step:
 
 ```bat
 set A=C:\Users\Owner\Documents\git\psd\dsp\analisis estadistico
-set R=C:\Users\Owner\Documents\BD\resultados_analisis
+set R=D:\wherever\you\want\results
 
 python "%A%\p1_extraer_fasores.py"      --entrada "C:\Users\Owner\Documents\BD\All data" --salida "%R%"
 python "%A%\p2_graficar_fasores.py"     --salida "%R%" --desenvolver
 python "%A%\p3_compensar_runout.py"     --salida "%R%" --modo viscosidad
 python "%A%\p4_graficar_compensados.py" --salida "%R%" --desenvolver
 python "%A%\p5_anova_split_plot.py"     --salida "%R%" --grupos-velocidad --grupos-desbalanceo
-python "%A%\p6_graficar_pvalores.py"   --salida "%R%"
+python "%A%\p6_graficar_pvalores.py"    --salida "%R%"
 ```
 
-Los valores por defecto de `--entrada` y `--salida` se editan en `config.py`.
-Dependencias: `numpy`, `pandas`, `scipy`, `matplotlib`, `openpyxl`.
+`--salida` may be any local folder; it does not have to sit inside the repo and
+is created if missing. Defaults for `--entrada` and `--salida` live in
+`config.py`. Dependencies: `numpy`, `pandas`, `scipy`, `matplotlib`, `openpyxl`.
 
-Para probar el pipeline sin datos reales:
+To exercise the pipeline without field data:
 
 ```bat
-python "%A%\_generar_datos_prueba.py" --salida "%R%\xlsx_sinteticos"
-python "%A%\ejecutar_todo.py" --entrada "%R%\xlsx_sinteticos" --salida "%R%\prueba"
+python "%A%\_generar_datos_prueba.py" --salida "%R%\synthetic_xlsx"
+python "%A%\ejecutar_todo.py" --entrada "%R%\synthetic_xlsx" --salida "%R%\test"
 ```
 
 ---
 
-## Paso 1 — Extracción de fasores
+## Figures for a two-column paper
 
-Procesa **solo** los archivos que cumplen la nomenclatura
+A figure is legible in print when its type is the right size **at the size it
+will be printed**. Drawing a 16 in wide figure and shrinking it into a 3.5 in
+column scales the text down by 4.6x, which is exactly why large on-screen
+figures come out unreadable on paper.
 
-```
-rep<R>_<viscosidad>_<desbalanceo>_p_<fecha>.xlsx
-```
+`--formato` therefore fixes the FINAL width and sizes the type for it, so the
+figure is placed at 100 % with no scaling:
 
-El resto de archivos de la carpeta se ignoran (se informa cuántos). El sufijo
-`_p_` selecciona proximitores; con `--tipo ac` se procesarían los acelerómetros.
-Cada hoja cuyo nombre sea un número se interpreta como una velocidad en rpm; las
-hojas auxiliares (`prox`, `Hoja17`, …) se descartan solas.
-
-Las columnas se localizan **por contenido** de la cabecera (`Mach1.P1.Y` +
-`Displacement`/`Phase`), no por posición fija, de modo que un cambio de orden en
-la exportación no rompe nada.
-
-### Análisis de estabilización
-
-Cada medición dura ~3 min. Antes de promediar se busca **el tramo final más largo
-que ya esté estabilizado**, es decir, en el que el fasor ya no deriva:
-
-| Criterio | Qué mide | Tolerancia (`config.py`) |
+| `--formato` | Width | Use |
 |---|---|---|
-| `deriva_amp` | \|mediana(primer cuarto) − mediana(última mitad)\| / mediana | `TOL_DERIVA_AMP` = 0.05 |
-| `deriva_fase` | ángulo entre las medias circulares de ambos tramos | `TOL_DERIVA_FASE` = 5° |
-| `cv_amp` | dispersión robusta de la amplitud / mediana | `TOL_CV_AMP` = 0.15 |
-| `disp_fase` | desviación **circular** de la fase | `TOL_DISP_FASE` = 12° |
+| `screen` (default) | 16 in, 200 dpi | reviewing on a monitor |
+| `column` | 3.5 in / 88.9 mm, 600 dpi | one column of a two-column letter page |
+| `double` | 7.16 in / 181.6 mm, 600 dpi | spanning both columns |
 
-Se compara el *primer cuarto* contra la *última mitad* (y no mitad contra mitad)
-porque un transitorio corto al principio queda diluido en la mediana de media
-ventana y pasaría desapercibido.
+`--paneles-por-sensor` switches the bar figures from *four probes on shared
+axes* to a **2x2 grid with one panel per probe**. Which one reads better depends
+on the figure:
 
-Sobre el tramo aceptado se hace el **promedio vectorial** del fasor. El detector
-se comportó así en pruebas con transitorios de magnitud conocida:
+* **Shared axes** is more compact and makes probe-to-probe differences
+  immediate. Good with few, short category labels.
+* **One panel per probe** keeps every label legible when there are many
+  categories. This is usually the right choice at `--formato column`.
 
-| Señal | Recorta |
-|---|---|
-| sin transitorio | nada |
-| escalón 25 % que decae con τ = 20 s | 11 s |
-| el mismo con τ = 40 s | 41 s |
-| rampa del 20 % que nunca se asienta | 106 s |
-| rampa del 40 % que nunca se asienta | nada aceptable → **marcado como no estable** |
+Both switches apply to steps 5 and 6:
 
-**Salidas:** `p1_fasores.txt` (tabla principal) y
-`p1_diagnostico_estabilizacion.txt` (una fila por ensayo × rpm × sensor, con
-todas las métricas y la marca `estable`). Conviene revisar las filas con
-`estable = 0`: suelen corresponder a puntos donde la amplitud colapsa y la fase
-pierde sentido físico.
+```bat
+python "%A%\p5_anova_split_plot.py" --salida "%R%" --formato double --paneles-por-sensor
+python "%A%\p6_graficar_pvalores.py" --salida "%R%" --formato double --paneles-por-sensor --ymax 0.1
+```
 
-### Verificación del diseño
+The interaction figures (`p5_interactions`, `p5_viscosity_by_speed_band`,
+`p5_viscosity_by_unbalance`) **always** use one panel per probe, whatever the
+switch says: the probes differ by roughly a factor of six in micrometres, so
+overlaying them on one axis would flatten the smaller one against the axis.
 
-Se comprueba que estén las **27** combinaciones `rep × visc × desb` y se avisa de
-las que falten, las que sobren y los duplicados. También se avisa si falta alguna
-de las 15 velocidades o si hay valores que no se pudieron calcular.
+Colour encoding of the probes: bearing 1 in blues, bearing 2 in warm tones; the
+Y direction dark and the X direction light.
 
 ---
 
-## Pasos 2 y 4 — Figuras de fasores
+## Speed bands
 
-12 figuras por cada juego de datos, con este reparto 2×2:
+`--grupos-velocidad` repeats the whole analysis inside each band. They are named
+**G1..G4** on the axes — long names become unreadable once a figure is scaled
+into a column — and the meaning is spelled out in the figure subtitle and here:
 
-|  | columna 1 (sensor **Y**) | columna 2 (sensor **X**) |
+| Band | Speeds [rpm] | Meaning |
 |---|---|---|
-| **fila 1** | amplitud 1X [µm] | amplitud 1X [µm] |
-| **fila 2** | fase 1X [°] | fase 1X [°] |
+| **G1** | 600, 1300, 2000 | low speed |
+| **G2** | 2500, 2600, 2700, 2800 | below the 1st critical |
+| **G3** | 3400, 3500, 3600, 3700 | near the 1st critical |
+| **G4** | 4000, 4500, 5000, 5500 | above the 1st critical |
 
-* **6 figuras** `desbalanceo<d>_<coj>.png` — fijan desbalanceo y cojinete y
-  superponen las 3 viscosidades × 3 repeticiones.
-* **6 figuras** `viscosidad<v>_<coj>.png` — fijan viscosidad y cojinete y
-  superponen los 3 desbalanceos × 3 repeticiones.
+Edit them in `config.GRUPOS_VELOCIDAD`. `--grupos-desbalanceo` does the same per
+unbalance level, named **U1..U3**.
 
-Convenios, constantes en **todas** las figuras:
+---
 
-| Codificación | Factor |
+## Step 1 — Phasor extraction
+
+Only files matching the naming convention are processed:
+
+```
+rep<R>_<viscosity>_<unbalance>_p_<date>.xlsx
+```
+
+Everything else in the folder is ignored (the count is reported). The `_p_`
+suffix selects the proximity probes; `--tipo ac` would process the
+accelerometers. Every sheet whose name is a number is read as a speed in rpm;
+auxiliary sheets (`prox`, `Hoja17`, ...) drop out on their own.
+
+Columns are located **by header content** (`Mach1.P1.Y` + `Displacement`/
+`Phase`), not by fixed position, so a change of column order in the export does
+not break anything.
+
+### Stabilisation analysis
+
+Each measurement lasts ~3 min. Before averaging, the script looks for **the
+longest final stretch that has already settled**, i.e. where the phasor no
+longer drifts:
+
+| Criterion | What it measures | Tolerance (`config.py`) |
+|---|---|---|
+| `deriva_amp` | \|median(first quarter) − median(last half)\| / median | `TOL_DERIVA_AMP` = 0.05 |
+| `deriva_fase` | angle between the circular means of both stretches | `TOL_DERIVA_FASE` = 5° |
+| `cv_amp` | robust amplitude scatter / median | `TOL_CV_AMP` = 0.15 |
+| `disp_fase` | **circular** standard deviation of the phase | `TOL_DISP_FASE` = 12° |
+
+The *first quarter* is compared against the *last half* (rather than half
+against half) because a short transient at the beginning gets diluted in the
+median of half a window and would go unnoticed.
+
+The accepted stretch is then averaged **vectorially**. Against transients of
+known size the detector behaved like this:
+
+| Signal | Trimmed |
 |---|---|
-| **Color** | viscosidad: ISO 32 rojo · ISO 46 azul · ISO 68 verde |
-| **Saturación** del color | desbalanceo: 1 el más atenuado, 3 el pleno |
-| **Estilo de línea** | repetición: 1 continua, 2 discontinua, 3 punteada |
+| no transient | nothing |
+| 25 % step decaying with τ = 20 s | 11 s |
+| the same with τ = 40 s | 41 s |
+| 20 % ramp that never settles | 106 s |
+| 40 % ramp that never settles | nothing acceptable → **flagged as not stable** |
 
-Solo línea, sin marcadores. El **eje X** reparte las 15 velocidades en 15
-posiciones equiespaciadas (no a escala numérica de rpm). Los **límites del eje Y**
-son comunes a las 12 figuras y salen del máximo y el mínimo globales de toda la
-tabla, uno para amplitud y otro para fase.
+**Outputs:** `p1_phasors.txt` (main table) and
+`p1_stabilisation_diagnostics.txt` (one row per run × rpm × probe with every
+metric and the `estable` flag). Rows with `estable = 0` are worth a look: they
+usually sit where the amplitude collapses and the phase loses physical meaning.
 
-> **`--desenvolver`** — muy recomendable. Sin él, la fila de fase muestra saltos
-> verticales artificiales de 0 a 360 que ocultan la tendencia real (el desfase
-> progresivo al pasar las críticas). Con él, cada curva se dibuja de forma
-> continua. No está activado por defecto para que la figura muestre por defecto
-> exactamente los valores de la tabla.
+### Design check
 
-El paso 4 admite además `--escala-comun`, que amplía los límites para englobar
-también los datos sin compensar y así poder comparar directamente las figuras del
-paso 2 con las del paso 4.
+The 27 `rep × visc × unbalance` combinations are verified, and missing, extra
+and duplicated ones are reported. Missing speeds and values that could not be
+computed are reported too.
 
 ---
 
-## Paso 3 — Compensación de runout
+## Steps 2 and 4 — Phasor figures
 
-```
-z_compensado(rpm) = z_medido(rpm) − z_slow_roll
-```
+Twelve figures per dataset, laid out 2x2:
 
-El vector de slow roll es el **promedio vectorial** de los fasores a 600 rpm.
-`--modo` elige el agrupamiento: `viscosidad` (por defecto), `global` o
-`rep_viscosidad`.
+|  | column 1 (**Y** probe) | column 2 (**X** probe) |
+|---|---|---|
+| **row 1** | 1X amplitude [µm] | 1X amplitude [µm] |
+| **row 2** | 1X phase [°] | 1X phase [°] |
 
-### El problema del ángulo, y por qué aquí no existe
+* **6 figures** `unbalance<d>_<bearing>.png` — fix unbalance and bearing, overlay
+  the 3 viscosities × 3 repetitions.
+* **6 figures** `viscosity<v>_<bearing>.png` — fix viscosity and bearing, overlay
+  the 3 unbalance levels × 3 repetitions.
 
-Las fases vienen envueltas en [0, 360). Dos medidas casi idénticas pueden salir
-como 359° y 1°, y su media aritmética daría 180°: exactamente lo contrario del
-valor correcto. **El promedio aritmético de ángulos no es válido.**
+Encoding, constant across **all** figures:
 
-La solución no es corregir el promedio a posteriori, sino no calcularlo nunca así:
-se pasa cada medida a su fasor complejo `z = A·e^{iφ}`, se promedian parte real e
-imaginaria, y del resultado se recuperan amplitud y fase. Como el ángulo nunca se
-manipula como escalar, el envolvimiento deja de existir. Comprobación con nueve
-medidas repartidas alrededor de 0°:
+| Encoding | Factor |
+|---|---|
+| **Colour** | viscosity: ISO 32 red · ISO 46 blue · ISO 68 green |
+| **Colour saturation** | unbalance: 1 the most washed out, 3 full colour |
+| **Line style** | repetition: 1 solid, 2 dashed, 3 dotted |
 
-```
-fases: [358.0, 359.5, 1.0, 2.5, 0.3, 357.8, 3.1, 359.0, 1.7]
-  media aritmética (incorrecta) : 160.32°
-  media vectorial  (correcta)   :   0.32°
-  dispersión circular: 1.80°   (la desviación típica ingenua daría 177.3°)
-```
+Lines only, no markers. The **X axis** spreads the 15 speeds over 15 evenly
+spaced positions (not on a numeric rpm scale). The **Y limits** are shared by
+all twelve figures and come from the global maximum and minimum of the table,
+one for amplitude and one for phase.
 
-Para las series en las que sí hace falta un ángulo **continuo** (dibujar curvas,
-medir derivas) está `comun.desenvolver_fase`, que suma a cada muestra el múltiplo
-de 360 que la deja más cerca de la anterior.
+> **`--desenvolver`** — strongly recommended. Without it the phase row shows
+> artificial vertical jumps from 0 to 360 that hide the real trend (the
+> progressive lag through the criticals). With it every curve is drawn
+> continuously. It is off by default so the figure shows exactly the values in
+> the table.
 
-El script informa, grupo a grupo, de la discrepancia entre la media ingenua y la
-vectorial, y de la concentración circular `R` (con `R < 0.9` la fase promedio es
-poco representativa). Genera además `p3_slow_roll.png` con los diagramas polares
-de los fasores a 600 rpm.
-
-### ¿Tiene sentido que el slow roll dependa de la viscosidad?
-
-Preguntas si tiene sentido que el fasor de slow roll salga distinto según el
-aceite. Respuesta corta: **el runout propiamente dicho no puede depender del
-aceite, pero lo que se mide a 600 rpm no es solo runout.**
-
-* El runout **mecánico** (geometría y curvatura del eje) y el **eléctrico**
-  (variaciones del material que ve la sonda de corrientes de Foucault) son
-  propiedades del eje y de la sonda. El aceite no los toca. Si midieras runout
-  puro, tendría que salir idéntico con los tres aceites.
-* Lo que se registra a 600 rpm es runout **más** la respuesta síncrona que ya
-  existe a esa velocidad. Con la primera crítica en torno a 3500 rpm,
-  *r* = 600/3500 ≈ 0.17 y el factor de amplificación `r²/(1−r²)` ≈ 0.03: pequeño,
-  pero no nulo.
-* Además, la posición de equilibrio del muñón dentro del cojinete depende del
-  número de Sommerfeld (viscosidad × velocidad / carga). Cambiar de aceite mueve
-  la excentricidad y el ángulo de actitud, y con ellos los coeficientes de rigidez
-  y amortiguamiento del cojinete — que a su vez modifican esa pequeña respuesta
-  síncrona.
-
-Es decir: una dependencia leve con la viscosidad a 600 rpm es **físicamente
-plausible, pero no es runout: es respuesta dinámica temprana**. Y ahí está el
-riesgo — si restas un slow roll distinto por viscosidad, estarás restando parte
-del efecto que quieres medir.
-
-**Qué hacer:**
-
-1. El script cuantifica el caso con `comparar_viscosidades`: compara la separación
-   *entre* las medias de las tres viscosidades con la dispersión *dentro* de cada
-   viscosidad (repeticiones y desbalanceos). Mira la columna
-   `razon_entre_dentro`:
-   * **< 2** → la diferencia no supera al ruido de medida: no está respaldada.
-     Usa `--modo global`.
-   * **≫ 2** → la diferencia es medible y hay que decidir de dónde viene.
-2. Si al cambiar de aceite **se desmonta y se vuelve a montar el rotor**, el
-   runout mecánico sí puede cambiar de verdad — pero entonces cambia por
-   *montaje*, no por *viscosidad*. En ese caso lo correcto es `--modo
-   rep_viscosidad`, que asigna un slow roll a cada combinación repetición ×
-   viscosidad.
-3. Lo ideal sería medir el slow roll a una velocidad claramente por debajo de la
-   zona de respuesta, del orden del 10–15 % de la primera crítica (≈ 350–500 rpm
-   aquí). 600 rpm es ≈ 17 %: está en el límite. Con `--rpm-slow-roll` puedes usar
-   otra velocidad si en algún momento registras una más baja.
+Step 4 also accepts `--escala-comun`, which widens the limits to cover the
+uncompensated data too, so step 2 and step 4 figures can be compared directly.
 
 ---
 
-## Paso 5 — Análisis estadístico
+## Step 3 — Runout compensation
 
-### Por qué el ANOVA factorial corriente no vale
+```
+z_compensated(rpm) = z_measured(rpm) − z_slow_roll
+```
 
-El ensayo **no** es un experimento completamente aleatorizado. Es un
-**split-split-plot en bloques**:
+The slow-roll vector is the **vector mean** of the phasors at 600 rpm. `--modo`
+picks the grouping: `viscosidad` (default), `global` or `rep_viscosidad`.
 
-| Nivel | Factor | Niveles | Por qué |
+### The angle problem, and why it does not exist here
+
+Phases arrive wrapped into [0, 360). Two nearly identical measurements can come
+out as 359° and 1°, and their arithmetic mean would be 180°: the exact opposite
+of the right answer. **The arithmetic mean of angles is not valid.**
+
+The fix is not to correct the mean afterwards, but never to compute it that way:
+each measurement becomes a complex phasor `z = A·e^{iφ}`, real and imaginary
+parts are averaged, and amplitude and phase are recovered from the result. Since
+the angle is never handled as a scalar, wrapping stops existing. Checked on nine
+measurements spread around 0°:
+
+```
+phases: [358.0, 359.5, 1.0, 2.5, 0.3, 357.8, 3.1, 359.0, 1.7]
+  arithmetic mean (wrong) : 160.32°
+  vector mean     (right) :   0.32°
+  circular scatter: 1.80°   (the naive standard deviation would give 177.3°)
+```
+
+Where a **continuous** angle is genuinely needed (drawing curves, measuring
+drift) `comun.desenvolver_fase` adds to each sample the multiple of 360 that
+leaves it closest to the previous one.
+
+The script reports, group by group, the discrepancy between the naive and the
+vector mean, and the circular concentration `R` (below 0.9 the mean phase is not
+representative). It also writes `p3_slow_roll.png` with the polar diagrams of
+the phasors at 600 rpm.
+
+### Does a viscosity-dependent slow roll make sense?
+
+Short answer: **runout proper cannot depend on the oil, but what is measured at
+600 rpm is not only runout.**
+
+* Mechanical runout (shaft geometry and bow) and electrical runout (material
+  variations seen by the eddy-current probe) are properties of the shaft and the
+  probe. The oil does not touch them.
+* What is recorded at 600 rpm is runout **plus** the synchronous response that
+  already exists at that speed. With the first critical around 3500 rpm,
+  *r* = 600/3500 ≈ 0.17 and the amplification factor `r²/(1−r²)` ≈ 0.03: small,
+  but not zero.
+* The journal equilibrium position inside the bearing also depends on the
+  Sommerfeld number (viscosity × speed / load). Changing the oil moves the
+  eccentricity and the attitude angle, and with them the bearing stiffness and
+  damping coefficients — which in turn modify that small synchronous response.
+
+So a mild viscosity dependence at 600 rpm is **physically plausible, but it is
+not runout: it is early dynamic response**. And that is the risk — subtracting a
+viscosity-dependent slow roll removes part of the very effect being measured.
+
+**What to do:**
+
+1. `comparar_viscosidades` quantifies it: it compares the separation *between*
+   the three viscosity means against the scatter *within* each viscosity. Look
+   at `razon_entre_dentro`:
+   * **< 2** → the difference does not exceed measurement noise. Use
+     `--modo global`.
+   * **≫ 2** → the difference is measurable and its origin has to be decided.
+2. If the rotor is **dismantled and re-mounted** when the oil is changed, the
+   mechanical runout genuinely can change — but then it changes per *mounting*,
+   not per *viscosity*. The right choice there is `--modo rep_viscosidad`.
+3. Ideally the slow roll would be measured well below the response region,
+   around 10–15 % of the first critical (≈ 350–500 rpm here). 600 rpm is ≈ 17 %:
+   borderline. `--rpm-slow-roll` accepts another speed if a lower one is ever
+   recorded.
+
+---
+
+## Step 5 — Statistical analysis
+
+### Why an ordinary factorial ANOVA is wrong here
+
+The experiment is **not** completely randomised. It is a **split-split-plot in
+blocks**:
+
+| Level | Factor | Levels | Why |
 |---|---|---|---|
-| bloque | repetición | 3 | |
-| parcela grande | viscosidad | 3 | cambiar el aceite es costoso: se hace pocas veces |
-| subparcela | desbalanceo | 3 | se cambia la masa sin tocar el aceite |
-| sub-subparcela | velocidad | 15 | barrido dentro de cada montaje |
+| block | repetition | 3 | |
+| whole plot | viscosity | 3 | changing the oil is expensive, done rarely |
+| subplot | unbalance | 3 | the mass changes without touching the oil |
+| sub-subplot | speed | 15 | sweep within a single mounting |
 
-Cada nivel de aleatorización tiene **su propio término de error**:
+Every randomisation level has **its own error term**:
 
-| Efecto | Se contrasta contra | gl del denominador |
+| Effect | Tested against | Denominator df |
 |---|---|---|
-| Viscosidad | Error(a) = Rep × Visc | **4** |
-| Desbalanceo, Visc×Desb | Error(b) = Rep × Desb \| Visc | 12 |
-| Velocidad y sus interacciones | Error(c) | 252 |
+| Viscosity | Error(a) = Rep × Visc | **4** |
+| Unbalance, Visc×Unb | Error(b) = Rep × Unb \| Visc | 12 |
+| Speed and its interactions | Error(c) | 252 |
 
-`f3_s1_v1.py` y `f3_s1_v2.py` contrastan **todo** contra el residual global
-(270 gl). Eso trata la viscosidad como si el rotor se hubiera montado 405 veces
-de forma independiente, cuando en realidad **solo hay 9 unidades de parcela
-grande** (3 bloques × 3 aceites). El denominador queda demasiado pequeño y la F
-se dispara.
+`f3_s1_v1.py` and `f3_s1_v2.py` test **everything** against the global residual
+(270 df). That treats viscosity as if the rotor had been mounted 405
+independent times, when there are only **9 whole-plot units** (3 blocks ×
+3 oils). The denominator is far too small and the F ratio explodes.
 
-### Cuánto importa, medido
+### How much it matters, measured
 
-Simulación bajo la hipótesis nula (la viscosidad **no** tiene ningún efecto), con
-variabilidad de montaje realista, 600 réplicas por escenario:
+Simulation under the null hypothesis (viscosity has **no** effect), with
+realistic mounting variability, 600 replicates per scenario:
 
-| σ de parcela grande | Rechazos del test **correcto** | Rechazos del test **ingenuo** |
+| Whole-plot σ | Rejections, **correct** test | Rejections, **naive** test |
 |---|---|---|
 | 0.0 | 5.7 % | 48.3 % |
 | 0.5 | 5.2 % | 78.0 % |
 | 1.0 | 4.5 % | 87.7 % |
 | 2.0 | 5.7 % | 91.8 % |
 
-*(nominal esperado: 5 %)*
+*(nominal expectation: 5 %)*
 
-El test de parcelas subdivididas mantiene el 5 % nominal. El ANOVA ingenuo declara
-significativa la viscosidad hasta en **9 de cada 10 casos en los que no hay
-efecto alguno**. No es un matiz: es la diferencia entre un resultado y un
-artefacto.
+The split-plot test holds the nominal 5 %. The naive ANOVA declares viscosity
+significant in up to **9 out of 10 cases where there is no effect at all**. That
+is not a nuance: it is the difference between a result and an artefact.
 
-Sobre datos sintéticos con efecto real, el ANOVA ingenuo multiplicó la F de la
-viscosidad por un factor de **14 a 31**, llevando el valor p de ~0.007 (real) a
-~10⁻⁹⁶ (irreal).
+On synthetic data with a real effect, the naive ANOVA multiplied the viscosity F
+by a factor of **14 to 31**, taking the p value from ~0.007 (real) to ~10⁻⁹⁶.
 
-> La descomposición de sumas de cuadrados implementada se validó contra
-> `statsmodels` (`anova_lm`, tipo II): coinciden hasta ~1e-14 en todos los
-> efectos, y los tres estratos de error suman exactamente el residual del modelo
-> factorial. Lo que cambia no son las sumas de cuadrados, sino **contra qué se
-> divide cada una**.
+> The sum-of-squares decomposition was validated against `statsmodels`
+> (`anova_lm`, type II): they agree to ~1e-14 on every effect, and the three
+> error strata add up exactly to the residual of the factorial model. What
+> changes is not the sums of squares but **what each one is divided by**.
 
-Ojo a un efecto secundario interesante: para los factores de sub-subparcela
-(velocidad y sus interacciones) el análisis correcto da p **más** pequeños que el
-ingenuo, porque el residual agrupado estaba contaminado con la varianza de los
-estratos superiores.
+Note a side effect: for the sub-subplot factors (speed and its interactions) the
+correct analysis gives **smaller** p values than the naive one, because the
+pooled residual was contaminated with the variance of the upper strata.
 
-### Presentación de las figuras
+### Analysis by unbalance level
 
-Todas las figuras estadísticas ponen **los 4 proximitores en unos mismos ejes**,
-no un panel por sensor:
+With `--grupos-desbalanceo` the analysis is repeated **for each unbalance level
+separately**, suffixed `_U1/_U2/_U3`, plus the comparison figure
+`p5_viscosity_by_unbalance.png`.
 
-| Figura | Cómo se superponen |
-|---|---|
-| `p5_contribucion` | barras agrupadas: color = sensor · trama = no significativo |
-| `p5_ingenuo_vs_correcto` | 2 paneles (un modelo cada uno), sensores agrupados dentro |
-| `p5_efecto_viscosidad` | X = sensor, una barra por aceite dentro de cada uno |
-| `p5_interacciones` | color = viscosidad · estilo de línea = sensor |
-| `p5_viscosidad_por_grupo` / `_por_desbalanceo` | líneas arriba, barras agrupadas abajo |
-| `p5_estratos_varianza` | ya era una barra apilada por sensor |
-| `p6_pvalores*` | barras agrupadas: color = sensor · trama = no significativo |
+There is a change of model worth understanding: fixing the unbalance **removes
+that factor from the model** and with it its error stratum. The design stops
+being a split-split-plot and reduces to a **split-plot in blocks**:
 
-Colores de sensor: cojinete 1 en azules, cojinete 2 en cálidos; la dirección **Y**
-en el tono oscuro y la **X** en el claro.
-
-> **Las figuras de líneas van normalizadas.** En `p5_interacciones` y en la fila
-> superior de `p5_viscosidad_por_grupo`, cada sensor se divide por su propia media
-> antes de superponerlo, y el eje pasa a ser «% de la media del sensor». Sin eso,
-> P1Y y P2Y difieren en un factor ~6 en micrómetros y el sensor pequeño quedaría
-> aplastado contra el eje. Lo que se compara así es la **forma** de la respuesta,
-> que es de lo que habla una interacción; las magnitudes absolutas en µm están en
-> `p5_efecto_viscosidad.png`.
-
-### Salidas
-
-En `<salida>/p5_estadistica`:
-
-| Archivo | Contenido |
-|---|---|
-| `anova_split_plot.csv` | tabla completa por sensor: SS, gl, MS, término de error, F, p, contribución, ω² |
-| `anova_ingenuo.csv` | el ANOVA factorial corriente, para comparar |
-| `comparacion_viscosidad.csv` | F y p correctos frente a ingenuos, y el factor de inflación |
-| `posthoc_viscosidad.csv` | Tukey entre aceites usando Error(a) y sus 4 gl |
-| `componentes_varianza.csv` | varianza atribuible a cada estrato |
-| `p5_contribucion.png` | descomposición de la variabilidad, con marca de significancia real |
-| `p5_ingenuo_vs_correcto.png` | la evidencia real frente a la inflada, efecto por efecto |
-| `p5_efecto_viscosidad.png` | media por aceite con IC 95 % basado en Error(a) |
-| `p5_interacciones.png` | viscosidad × velocidad y viscosidad × desbalanceo |
-| `p5_estratos_varianza.png` | de dónde viene la variabilidad del ensayo |
-
-### Análisis por tramos de velocidad
-
-Con `--grupos-velocidad` se repite **todo** el análisis dentro de cada tramo de rpm
-(bajas / pre-crítica / 1ª crítica / altas), como hacía `f3_s1_v2.py` pero con los
-términos de error correctos. Genera los CSV y **también las 5 figuras** de cada
-tramo, con el sufijo del grupo:
-
-```
-p5_interacciones_Grupo_3_1a_critica.png
-p5_efecto_viscosidad_Grupo_3_1a_critica.png
-p5_contribucion_Grupo_3_1a_critica.png
-...
-```
-
-Más una figura adicional, `p5_viscosidad_por_grupo.png`, que compara los cuatro
-tramos entre sí: arriba la media por aceite en cada tramo, abajo la evidencia del
-efecto (verde = significativo). Es la lectura que da sentido a una interacción
-Visc × Vel significativa: el efecto de la viscosidad **no es el mismo a todas las
-velocidades**, y esta figura dice en qué régimen aparece.
-
-Los tramos se editan en `GRUPOS_VELOCIDAD`, al principio del script.
-
-### Análisis por nivel de desbalanceo
-
-Con `--grupos-desbalanceo` se repite todo el análisis **para cada desbalanceo por
-separado**, con sufijo `_Desbalanceo_1/2/3`, más la figura comparativa
-`p5_viscosidad_por_desbalanceo.png`.
-
-Aquí hay un cambio de modelo que conviene entender: al fijar el desbalanceo, **ese
-factor sale del modelo** y con él desaparece su estrato de error. El diseño deja de
-ser split-split-plot y se reduce a un **split-plot en bloques**:
-
-| | Diseño completo | Fijando un desbalanceo |
+| | Full design | Fixing one unbalance level |
 |---|---|---|
-| bloque | repetición | repetición |
-| parcela grande | viscosidad | viscosidad |
-| subparcela | desbalanceo | **velocidad** |
-| sub-subparcela | velocidad | — |
-| Fuentes en la tabla | 11 | **6** |
-| Error(a) | Rep × Visc, 4 gl | Rep × Visc, **4 gl** |
-| Error(b) | Rep × Desb \| Visc, 12 gl | residual, 84 gl |
-| Error(c) | 252 gl | no existe |
+| block | repetition | repetition |
+| whole plot | viscosity | viscosity |
+| subplot | unbalance | **speed** |
+| sub-subplot | speed | — |
+| Sources in the table | 11 | **6** |
+| Error(a) | Rep × Visc, 4 df | Rep × Visc, **4 df** |
+| Error(b) | Rep × Unb \| Visc, 12 df | residual, 84 df |
+| Error(c) | 252 df | does not exist |
 
-**La viscosidad sigue juzgándose con 4 gl.** Separar por desbalanceo no aporta
-información sobre el aceite, porque el número de montajes de parcela grande
-(3 bloques × 3 aceites = 9) es el mismo. Lo que se gana es poder decir si el efecto
-del aceite cambia según cuánto desbalanceo haya — que es justo lo que el término
-`Visc × Desb` del análisis completo contrasta formalmente.
+**Viscosity is still judged with 4 df.** Splitting by unbalance adds no
+information about the oil, because the number of whole-plot mountings
+(3 blocks × 3 oils = 9) is unchanged. What it does show is whether the oil
+effect changes with the amount of unbalance — which is exactly what the
+`Visc × Unb` term of the full analysis tests formally.
 
-> Se validó igual que el diseño completo: los SS coinciden con `statsmodels`
-> (`y ~ C(Visc)*C(Vel)`) hasta ~1e-14, los gl suman n−1 = 134, y se cumplen dos
-> identidades que enlazan ambas implementaciones:
-> `Σ_d SS_Visc(en d) = SS_Visc + SS_Visc×Desb` y
-> `Σ_d SS_Error(a)(en d) = SS_Error(a) + SS_Rep×Visc×Desb` (12 gl = 4 + 8).
+> Validated the same way as the full design: sums of squares match `statsmodels`
+> (`y ~ C(Visc)*C(Speed)`) to ~1e-14, the df add up to n−1 = 134, and two
+> identities link both implementations:
+> `Σ_d SS_Visc(at d) = SS_Visc + SS_Visc×Unb` and
+> `Σ_d SS_Error(a)(at d) = SS_Error(a) + SS_Rep×Visc×Unb` (12 df = 4 + 8).
 
-> Hacer el análisis por tramos corrige de paso un sesgo de las figuras globales:
-> promediar la amplitud sobre las 15 velocidades queda dominado por la resonancia
-> (en los datos de prueba, 3 de las 15 velocidades aportan casi la mitad del
-> promedio). Dentro de un tramo, la media sí representa a ese régimen.
-> Por eso el título de `p5_interacciones*.png` indica cuántos valores promedia
-> cada punto en cada fila.
+### Outputs
 
-Por defecto analiza los datos **compensados** (`p3_fasores_compensados.txt`); con
-`--entrada` se puede apuntar a `p1_fasores.txt` para analizar los sin compensar.
+In `<salida>/p5_statistics`:
 
-### Dos advertencias
+| File | Contents |
+|---|---|
+| `anova_split_plot.csv` | full table per sensor: SS, df, MS, error term, F, p, contribution, ω² |
+| `anova_naive.csv` | the ordinary factorial ANOVA, for comparison |
+| `viscosity_comparison.csv` | correct vs naive F and p, and the inflation factor |
+| `posthoc_viscosity.csv` | Tukey between oils using Error(a) and its 4 df |
+| `variance_components.csv` | variance attributable to each stratum |
+| `p5_contribution.png` | variability decomposition, with real significance marks |
+| `p5_naive_vs_correct.png` | real evidence versus inflated evidence, effect by effect |
+| `p5_viscosity_effect.png` | mean per oil with a 95 % CI based on Error(a) |
+| `p5_interactions.png` | viscosity × speed and viscosity × unbalance |
+| `p5_variance_strata.png` | where the experimental variability comes from |
+| `p5_viscosity_by_speed_band.png` | (--grupos-velocidad) the effect band by band |
+| `p5_viscosity_by_unbalance.png` | (--grupos-desbalanceo) the effect level by level |
 
-* **La fase es una variable circular.** `--respuesta fase` existe, pero un ANOVA
-  sobre grados solo es defendible si ninguna condición cruza el 0/360 (359° y 1°
-  distan 2°, no 358°). El script lo avisa. Para un tratamiento riguroso haría
-  falta estadística circular; puedo añadirla si la necesitas.
-* **Con 4 gl en el denominador, la potencia para detectar el efecto de la
-  viscosidad es baja.** Eso no es un defecto del análisis, es lo que el diseño
-  permite: la información sobre la viscosidad la aportan 9 montajes, no 405
-  medidas. Si el efecto resulta no significativo, la conclusión honesta es "este
-  ensayo no tiene resolución suficiente para demostrarlo", no "no existe". Para
-  ganar potencia habría que aumentar el número de **repeticiones completas**
-  (bloques), que es lo que alimenta Error(a) — no más velocidades ni más
-  desbalanceos.
+By default the **compensated** data are analysed
+(`p3_phasors_compensated.txt`); `--entrada` can point at `p1_phasors.txt` to
+analyse the uncompensated ones.
 
+### Two warnings
+
+* **Phase is a circular variable.** `--respuesta phase` exists, but an ANOVA on
+  degrees is only defensible if no condition crosses 0/360 (359° and 1° are 2°
+  apart, not 358°). The script warns about it. A rigorous treatment would need
+  circular statistics; ask if you need it.
+* **With 4 denominator df, the power to detect the viscosity effect is low.**
+  That is not a flaw of the analysis, it is what the design allows: the
+  information about viscosity comes from 9 mountings, not 405 measurements. If
+  the effect comes out non-significant, the honest conclusion is "this
+  experiment lacks the resolution to demonstrate it", not "it does not exist".
+  Gaining power means more **complete repetitions** (blocks), which is what
+  feeds Error(a) — not more speeds and not more unbalance levels.
 
 ---
 
-## Paso 6 — Gráficas de valor p (`p6_graficar_pvalores.py`)
+## Step 6 — p-value figures
 
-Mismo reparto 2×2 por sensor que `p5_contribucion.png`, pero con el **valor p**
-en el eje Y en lugar de la contribución a la suma de cuadrados. Responde
-directamente a "¿es la viscosidad un factor relevante?".
+Same per-probe layout options as step 5, but the Y axis carries the **p value**
+instead of the share of the sum of squares.
 
 ```bat
 python "%A%\p6_graficar_pvalores.py" --salida "%R%"
@@ -442,41 +433,34 @@ python "%A%\p6_graficar_pvalores.py" --salida "%R%" --alfa 0.01
 python "%A%\p6_graficar_pvalores.py" --salida "%R%" --ymax 0.1
 ```
 
-No recalcula nada: lee los `anova_split_plot*.csv` que ya escribió el paso 5 y
-detecta solas las variantes que existan (global, tramos de velocidad, niveles de
-desbalanceo).
+It recomputes nothing: it reads the `anova_split_plot*.csv` files already
+written by step 5 and picks up whichever variants exist.
 
-* **Eje Y** = el valor p en **escala lineal normal**, de 0 a 1 (el rango natural
-  de una probabilidad). La altura de la barra **es** el valor p, sin transformar.
-* **Barra por debajo de la línea roja → factor significativo.** Cuanto más baja
-  la barra, más fuerte la evidencia. La zona significativa va sombreada en verde
-  y explicada en la leyenda.
+* **Y axis** = the p value on an **ordinary linear scale**, 0 to 1. The bar
+  height **is** the p value, untransformed.
+* **A bar below the red line is significant.** The lower the bar, the stronger
+  the evidence. The significant zone is shaded green and spelled out in the
+  legend.
+* **The number on each bar** is the exact p value.
+* **Green** = significant · **hatched** = not.
 
-> **Cuidado con el sentido de la escala.** `p < 0.05` significa que el factor
-> **sí** influye: el valor p es la probabilidad de observar estos datos *si el
-> factor no tuviera ningún efecto*, así que un p pequeño es evidencia fuerte.
-> Es lo contrario de lo que sugiere la intuición de "barra grande = importante".
-> Coincide con las marcas de `p5_contribucion.png`: `*` ↔ barra dentro de la
-> banda verde, `ns` ↔ barra por encima de la línea.
-* **Número sobre cada barra** = el valor p exacto.
-* **Línea roja discontinua** = el umbral (`--alfa`, 0.05 por defecto).
-* **Verde** = significativo · **gris** = no. La barra de `Visc` va resaltada.
+> **Mind the direction of the scale.** `p < 0.05` means the factor **does**
+> influence the response: the p value is the probability of observing these data
+> *if the factor had no effect at all*, so a small p is strong evidence. This is
+> the opposite of the "big bar = important" intuition. It agrees with the marks
+> in `p5_contribution.png`: significant ↔ bar inside the green band.
 
-> **`--ymax` para acercarte al umbral.** Con el eje completo (0 a 1) todas las
-> barras significativas quedan pegadas al suelo: se ve claramente que están por
-> debajo de la línea, pero no se distinguen entre sí. `--ymax 0.1` acota el eje a
-> la zona que importa; las barras que sobresalen se recortan y se marcan con una
-> flecha. En cualquier caso, el número escrito sobre cada barra da siempre el
-> valor exacto.
+> **`--ymax` to zoom into the threshold.** Over the full 0–1 range every
+> significant bar sits on the floor: clearly below the line, but
+> indistinguishable from each other. `--ymax 0.1` bounds the axis to the region
+> that matters; bars that exceed it are clipped and flagged with an arrow. The
+> exact number is printed on every bar either way.
 
-Salidas en `p5_estadistica`:
+Outputs in `p5_statistics`:
 
-| Archivo | Contenido |
+| File | Contents |
 |---|---|
-| `p6_pvalores.png` | todos los factores, análisis global |
-| `p6_pvalores_<variante>.png` | ídem para cada tramo de velocidad y cada desbalanceo |
-| `p6_pvalores_viscosidad.png` | **el resumen**: el p de la viscosidad en todas las variantes, por sensor |
-| `p6_pvalores.csv` | los mismos números en tabla, con la marca `Significativa` |
-
-Por consola imprime además una tabla `análisis × sensor` con el p de la
-viscosidad y el recuento de casos significativos.
+| `p6_pvalues.png` | every factor, global analysis |
+| `p6_pvalues_<variant>.png` | the same per speed band and per unbalance level |
+| `p6_pvalues_viscosity.png` | **the summary**: the viscosity p across every variant |
+| `p6_pvalues.csv` | the same numbers as a table, with a `Significant` flag |

@@ -1,15 +1,17 @@
 """
-Ejecuta los pasos 1 a 6 en orden, cada uno con sus argumentos por defecto.
+Run steps 1 to 6 in order, each with its default arguments.
 
-    python ejecutar_todo.py --entrada <carpeta_xlsx> --salida <carpeta_resultados>
+    python ejecutar_todo.py --entrada <xlsx_folder> --salida <results_folder>
 
-Argumentos utiles:
-    --modo-runout global      agrupamiento del vector de slow roll (paso 3)
-    --desenvolver             fase continua en las graficas (pasos 2 y 4)
-    --grupos-velocidad        ademas, ANOVA por tramos de rpm (paso 5)
-    --grupos-desbalanceo      ademas, ANOVA para cada desbalanceo por separado
-    --alfa 0.01               umbral de significancia (paso 6)
-    --desde 3                 reanuda a partir de un paso (no repite los previos)
+Useful arguments:
+    --formato double          figure width/typography for publication (steps 5-6)
+    --paneles-por-sensor      one panel per probe instead of shared axes (5-6)
+    --modo-runout global      slow-roll vector grouping (step 3)
+    --desenvolver             continuous phase in the phasor figures (steps 2, 4)
+    --grupos-velocidad        also run the ANOVA per speed band (step 5)
+    --grupos-desbalanceo      also run it per unbalance level (step 5)
+    --alfa 0.01               significance threshold (step 6)
+    --desde 3                 resume from a given step (earlier ones are skipped)
 """
 
 from __future__ import annotations
@@ -35,33 +37,39 @@ def correr(script: str, argumentos: list[str]) -> int:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Ejecuta los pasos 1..6 del analisis.")
-    p.add_argument("--entrada", default=config.DIR_EXCEL, help="Carpeta con los .xlsx")
-    p.add_argument("--salida", default=config.DIR_RESULTADOS, help="Carpeta de resultados")
+    p = argparse.ArgumentParser(description="Run steps 1..6 of the analysis.")
+    p.add_argument("--entrada", default=config.DIR_EXCEL, help="Folder holding the .xlsx files")
+    p.add_argument("--salida", default=config.DIR_RESULTADOS, help="Results folder")
     p.add_argument("--tipo", default="p", choices=["p", "ac"])
     p.add_argument("--modo-runout", dest="modo_runout", default="viscosidad",
                    choices=["viscosidad", "global", "rep_viscosidad"])
-    p.add_argument("--respuesta", default="amp", choices=["amp", "fase"])
+    p.add_argument("--respuesta", default="amp", choices=["amp", "phase"])
     p.add_argument("--desenvolver", action="store_true")
     p.add_argument("--grupos-velocidad", dest="grupos", action="store_true")
     p.add_argument("--grupos-desbalanceo", dest="grupos_desb", action="store_true")
     p.add_argument("--alfa", type=float, default=0.05,
-                   help="Umbral de significancia de las graficas del paso 6")
+                   help="Significance threshold for the step 6 figures")
+    p.add_argument("--formato", default=config.FORMATO_POR_DEFECTO,
+                   choices=sorted(config.FORMATOS_FIGURA),
+                   help="Figure size/typography preset for steps 5 and 6")
+    p.add_argument("--paneles-por-sensor", dest="paneles", action="store_true",
+                   help="One panel per probe in the steps 5 and 6 figures")
     p.add_argument("--desde", type=int, default=1, choices=[1, 2, 3, 4, 5, 6])
     args = p.parse_args()
 
     sal = ["--salida", args.salida]
     desenv = ["--desenvolver"] if args.desenvolver else []
+    fig = ["--formato", args.formato] + (["--paneles-por-sensor"] if args.paneles else [])
 
     pasos = [
         (1, "p1_extraer_fasores.py", ["--entrada", args.entrada, "--tipo", args.tipo] + sal),
         (2, "p2_graficar_fasores.py", sal + desenv),
         (3, "p3_compensar_runout.py", sal + ["--modo", args.modo_runout]),
         (4, "p4_graficar_compensados.py", sal + desenv),
-        (5, "p5_anova_split_plot.py", sal + ["--respuesta", args.respuesta]
+        (5, "p5_anova_split_plot.py", sal + fig + ["--respuesta", args.respuesta]
             + (["--grupos-velocidad"] if args.grupos else [])
             + (["--grupos-desbalanceo"] if args.grupos_desb else [])),
-        (6, "p6_graficar_pvalores.py", sal + ["--alfa", str(args.alfa)]),
+        (6, "p6_graficar_pvalores.py", sal + fig + ["--alfa", str(args.alfa)]),
     ]
 
     for numero, script, argumentos in pasos:
@@ -69,11 +77,11 @@ def main() -> int:
             continue
         codigo = correr(script, argumentos)
         if codigo != 0:
-            print(f"\n!! El paso {numero} ({script}) fallo con codigo {codigo}. Se detiene.")
+            print(f"\n!! Step {numero} ({script}) failed with code {codigo}. Stopping.")
             return codigo
 
     print("\n" + "=" * 78)
-    print(f"  Proceso completo. Resultados en: {args.salida}")
+    print(f"  Pipeline complete. Results in: {args.salida}")
     print("=" * 78)
     return 0
 

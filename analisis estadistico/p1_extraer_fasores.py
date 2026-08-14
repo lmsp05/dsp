@@ -137,9 +137,9 @@ def tramo_estable(t, amp, fase):
     for i in range(0, ultimos + 1, paso):
         m = _metricas(t, amp, fase, i)
         if (m["cv_amp"] <= config.TOL_CV_AMP
-                and m["disp_fase"] <= config.TOL_DISP_FASE
+                and m["disp_phase"] <= config.TOL_DISP_FASE
                 and m["deriva_amp"] <= config.TOL_DERIVA_AMP
-                and m["deriva_fase"] <= config.TOL_DERIVA_FASE):
+                and m["deriva_phase"] <= config.TOL_DERIVA_FASE):
             return i, True, m
     return ultimos, False, _metricas(t, amp, fase, ultimos)
 
@@ -170,9 +170,9 @@ def _metricas(t, amp, fase, i):
 
     return {
         "cv_amp": comun.dispersion_robusta(a) / med,
-        "disp_fase": comun.dispersion_circular(f),
+        "disp_phase": comun.dispersion_circular(f),
         "deriva_amp": deriva_amp,
-        "deriva_fase": deriva_fase,
+        "deriva_phase": deriva_fase,
         "disp_vect": disp_vect,
         "t_inicio": float(ts[0]) if len(ts) else np.nan,
         "n_usadas": int(len(a)),
@@ -201,32 +201,32 @@ def procesar_archivo(info, filas, diag):
             continue
 
         fila = {
-            "Repeticion": info["rep"], "Viscosidad": info["visc"],
-            "Desbalanceo": info["desb"], "Velocidad": rpm,
+            "Repetition": info["rep"], "Viscosity": info["visc"],
+            "Unbalance": info["desb"], "Speed": rpm,
         }
         for sensor in config.SENSORES:
             if sensor not in datos:
                 fila[f"{sensor}_amp"] = np.nan
-                fila[f"{sensor}_fase"] = np.nan
+                fila[f"{sensor}_phase"] = np.nan
                 continue
             t, a, f = datos[sensor]
             if len(a) < 3:
                 fila[f"{sensor}_amp"] = np.nan
-                fila[f"{sensor}_fase"] = np.nan
+                fila[f"{sensor}_phase"] = np.nan
                 continue
             i, estable, m = tramo_estable(t, a, f)
             # Promedio VECTORIAL sobre el tramo estable.
             amp_m, fase_m = comun.promedio_vectorial(a[i:], f[i:])
             fila[f"{sensor}_amp"] = amp_m
-            fila[f"{sensor}_fase"] = fase_m
+            fila[f"{sensor}_phase"] = fase_m
             diag.append({
-                "Repeticion": info["rep"], "Viscosidad": info["visc"],
-                "Desbalanceo": info["desb"], "Velocidad": rpm, "Sensor": sensor,
+                "Repetition": info["rep"], "Viscosity": info["visc"],
+                "Unbalance": info["desb"], "Speed": rpm, "Sensor": sensor,
                 "n_total": len(a), "n_usadas": m["n_usadas"],
                 "frac_usada": m["n_usadas"] / len(a),
                 "t_inicio_s": m["t_inicio"], "estable": int(estable),
-                "cv_amp": m["cv_amp"], "disp_fase_deg": m["disp_fase"],
-                "deriva_amp": m["deriva_amp"], "deriva_fase_deg": m["deriva_fase"],
+                "cv_amp": m["cv_amp"], "disp_fase_deg": m["disp_phase"],
+                "deriva_amp": m["deriva_amp"], "deriva_fase_deg": m["deriva_phase"],
                 "disp_vect": m["disp_vect"],
             })
         filas.append(fila)
@@ -305,7 +305,7 @@ def main() -> int:
     comun.escribir_tabla(dg, salida / config.ARCHIVO_DIAGNOSTICO)
 
     # ---- resumen ----
-    vel_halladas = sorted(int(v) for v in df["Velocidad"].unique())
+    vel_halladas = sorted(int(v) for v in df["Speed"].unique())
     print(f"\nFilas escritas: {len(df)}  (esperadas "
           f"{config.N_ARCHIVOS_ESPERADOS * len(config.VELOCIDADES)})")
     print(f"Velocidades encontradas ({len(vel_halladas)}): {vel_halladas}")

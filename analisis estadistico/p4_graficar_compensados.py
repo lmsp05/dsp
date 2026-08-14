@@ -39,7 +39,7 @@ def main() -> int:
                    help="def: <salida>/p3_fasores_compensados.txt")
     p.add_argument("--salida", default=config.DIR_RESULTADOS)
     p.add_argument("--subcarpeta", default=config.NOMBRE_DIR_CON_COMP)
-    p.add_argument("--etiqueta", default="con compensacion de runout")
+    p.add_argument("--etiqueta", default="with runout compensation")
     p.add_argument("--desenvolver", action="store_true",
                    help="Dibuja la fase de forma continua (quita saltos 0<->360)")
     p.add_argument("--escala-comun", dest="escala_comun", action="store_true",
@@ -72,12 +72,12 @@ def main() -> int:
         df, destino, args.etiqueta, lim_amp, lim_fase,
         desenvolver=args.desenvolver)
 
-    print(f"Tabla   : {entrada}  ({len(df)} filas)")
+    print(f"Table   : {entrada}  ({len(df)} rows)")
     if args.desenvolver:
-        print("Fase dibujada de forma continua (--desenvolver).")
-    print(f"Escala Y -> amplitud [{lim_amp[0]:.2f}, {lim_amp[1]:.2f}] um  |  "
-          f"fase [{lim_fase[0]:.1f}, {lim_fase[1]:.1f}] grados")
-    print(f"\n{len(generadas)} figuras en: {destino}")
+        print("Phase drawn continuously (--desenvolver).")
+    print(f"Y range -> amplitude [{lim_amp[0]:.2f}, {lim_amp[1]:.2f}] um  |  "
+          f"phase [{lim_fase[0]:.1f}, {lim_fase[1]:.1f}] deg")
+    print(f"\n{len(generadas)} figures in: {destino}")
     for r in generadas:
         print(f"  {r.name}")
     return 0
