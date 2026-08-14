@@ -62,7 +62,7 @@ from matplotlib.lines import Line2D
 
 import config
 import comun
-from p5_anova_split_plot import ETIQUETAS
+from p5_anova_split_plot import ETIQUETAS, reparto_paneles
 
 # Suelo numerico: por debajo de esto el valor p ya no es representable en doble
 # precision y los CSV traen 0. Se escribe como "<1e-300".
@@ -91,7 +91,7 @@ def fmt_p(p):
     return f"{p:.0e}"
 
 
-def _leyenda(fig, alfa):
+def _leyenda(fig, alfa, fmt=None):
     """
     Shared legend, placed outside the panels: inside it would collide with the
     bar labels, and the direction of the scale (small p = significant) is
@@ -109,7 +109,9 @@ def _leyenda(fig, alfa):
         Line2D([0], [0], color=COLOR_UMBRAL, ls="--",
                label=f"threshold p = {alfa:g}"),
     ]
-    fig.legend(handles=handles, loc="lower center", ncol=len(handles),
+    etiquetas = [h.get_label() for h in handles]
+    fig.legend(handles=handles, loc="lower center",
+               ncol=(comun.columnas_leyenda(etiquetas, fmt) if fmt else len(handles)),
                frameon=False, bbox_to_anchor=(0.5, -0.05))
 
 
@@ -127,7 +129,9 @@ def _barras(ax, categorias, valores, alfa, ymax, resaltar=None):
     sensores = [s for s in config.SENSORES if s in valores]
     n = len(sensores)
     x = np.arange(len(categorias), dtype=float)
-    ancho = 0.82 / max(n, 1)
+    # With few probes the group is narrowed so the gap between categories grows.
+    ancho_grupo = 0.82 if n >= 4 else (0.62 if n == 2 else 0.72)
+    ancho = ancho_grupo / max(n, 1)
 
     for k, sensor in enumerate(sensores):
         desplazamiento = (k - (n - 1) / 2) * ancho
@@ -162,7 +166,7 @@ def _barras(ax, categorias, valores, alfa, ymax, resaltar=None):
     # Banda sombreada por DEBAJO del umbral: zona en la que el factor SI influye.
     ax.axhspan(0, alfa, color=COLOR_SIG, alpha=0.10, zorder=0)
     ax.axhline(alfa, color=COLOR_UMBRAL, ls="--", lw=1.8, zorder=3)
-    ax.text(0.995, alfa + 0.012 * ymax, f"umbral p = {alfa:g}",
+    ax.text(0.995, alfa + 0.012 * ymax, f"threshold p = {alfa:g}",
             transform=ax.get_yaxis_transform(), ha="right", va="bottom",
             color=COLOR_UMBRAL, fontweight="bold", zorder=5,
             bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.8))
@@ -170,13 +174,13 @@ def _barras(ax, categorias, valores, alfa, ymax, resaltar=None):
 
 
 # ============================================================
-# FIGURAS
+# FIGURES
 # ============================================================
 
 def figura_variante(tab, ruta, alfa, etiqueta, ymax, fmt):
     """p value of every factor in one variant of the analysis."""
     contrastables = tab[tab["p"].notna()
-                        & (tab["Source"] != "Repeticion (bloque)")]
+                        & (tab["Source"] != "Repetition (block)")]
     fuentes = list(dict.fromkeys(contrastables["Source"]))
     etiquetas = [ETIQUETAS.get(f, f) for f in fuentes]
 
@@ -186,24 +190,26 @@ def figura_variante(tab, ruta, alfa, etiqueta, ymax, fmt):
         valores[sensor] = [float(t.loc[f, "p"]) for f in fuentes]
 
     if PANELES_POR_SENSOR:
-        fig, axes = plt.subplots(2, 2, figsize=comun.tam_figura(fmt, 0.85),
-                                 constrained_layout=True)
-        for ax, sensor in zip(axes.ravel(), config.SENSORES):
+        fig, axes = _rejilla(fmt, 0.85)
+        for ax, sensor in zip(axes, config.SENSORES):
             _barras(ax, etiquetas, {sensor: valores[sensor]}, alfa, ymax,
                     resaltar="Visc")
             ax.set_title(sensor, fontweight="bold")
             ax.set_ylabel("p value")
     else:
-        fig, ax = plt.subplots(figsize=comun.tam_figura(fmt, 0.45),
+        # With a single bearing the panel is squarer, which is what makes a
+        # full-column figure readable instead of a wide thin strip.
+        rel = 0.45 if len(config.SENSORES) >= 4 else 0.62
+        fig, ax = plt.subplots(figsize=comun.tam_figura(fmt, rel),
                                constrained_layout=True)
         _barras(ax, etiquetas, valores, alfa, ymax, resaltar="Visc")
         ax.set_ylabel("p value")
 
-    fig.suptitle(
+    fig.suptitle(comun.envolver_titulo(
         f"Significance of each factor — {etiqueta}\n"
         f"the SMALLER the p value, the stronger the evidence that the factor "
-        f"influences the response", fontweight="bold")
-    _leyenda(fig, alfa)
+        f"influences the response", fmt), fontweight="bold")
+    _leyenda(fig, alfa, fmt)
     fig.savefig(ruta, dpi=fmt["dpi"])
     plt.close(fig)
 
@@ -220,14 +226,14 @@ def figura_viscosidad(resumen, ruta, alfa, ymax, fmt):
         valores[sensor] = ps
 
     if PANELES_POR_SENSOR:
-        fig, axes = plt.subplots(2, 2, figsize=comun.tam_figura(fmt, 0.85),
-                                 constrained_layout=True)
-        for ax, sensor in zip(axes.ravel(), config.SENSORES):
+        fig, axes = _rejilla(fmt, 0.85)
+        for ax, sensor in zip(axes, config.SENSORES):
             _barras(ax, nombres, {sensor: valores[sensor]}, alfa, ymax)
             ax.set_title(sensor, fontweight="bold")
             ax.set_ylabel("viscosity p value")
     else:
-        fig, ax = plt.subplots(figsize=comun.tam_figura(fmt, 0.45),
+        rel = 0.45 if len(config.SENSORES) >= 4 else 0.62
+        fig, ax = plt.subplots(figsize=comun.tam_figura(fmt, rel),
                                constrained_layout=True)
         _barras(ax, nombres, valores, alfa, ymax)
         ax.set_ylabel("viscosity p value")
@@ -236,12 +242,12 @@ def figura_viscosidad(resumen, ruta, alfa, ymax, fmt):
                 for _, f in t[t["Source"] == "Viscosity"].iterrows()
                 if f["p"] < alfa)
     n_tot = len(resumen) * len(config.SENSORES)
-    fig.suptitle(
+    fig.suptitle(comun.envolver_titulo(
         f"Is viscosity a relevant factor? — p value in every analysis\n"
         f"significant in {n_sig} of {n_tot} cases (probe x analysis) · a bar "
         f"inside the green band means viscosity DOES influence the response",
-        fontweight="bold")
-    _leyenda(fig, alfa)
+        fmt), fontweight="bold")
+    _leyenda(fig, alfa, fmt)
     fig.savefig(ruta, dpi=fmt["dpi"])
     plt.close(fig)
 
@@ -275,12 +281,21 @@ def main() -> int:
                    choices=sorted(config.FORMATOS_FIGURA),
                    help="figure size/typography preset (default: screen)")
     p.add_argument("--paneles-por-sensor", dest="paneles", action="store_true",
-                   help="2x2 grid with one panel per probe instead of the four "
-                        "probes on shared axes")
+                   help="grid with one panel per probe instead of the probes "
+                        "on shared axes")
+    p.add_argument("--tamano-letra", dest="tam_letra", type=float, default=None,
+                   help="base font size in points at final size; every other "
+                        "element follows it and the figure grows taller")
+    p.add_argument("--tamano-titulo", dest="tam_titulo", type=float, default=None,
+                   help="title font size, set independently of --tamano-letra")
+    p.add_argument("--cojinete", default="todos", choices=["todos", "P1", "P2"],
+                   help="probes to plot: both bearings (default), only P1 "
+                        "(P1Y, P1X) or only P2")
     args = p.parse_args()
 
     PANELES_POR_SENSOR = args.paneles
-    fmt = comun.aplicar_formato(args.formato)
+    fmt = comun.aplicar_formato(args.formato, args.tam_letra, args.tam_titulo)
+    config.SENSORES = comun.seleccionar_sensores(args.cojinete)
 
     salida = Path(args.salida).expanduser()
     carpeta = Path(args.entrada).expanduser() if args.entrada \
@@ -307,15 +322,26 @@ def main() -> int:
     print(f"p axis  : linear, 0 to {args.ymax:g}"
           + ("   (use --ymax 0.1 to zoom into the threshold)"
              if args.ymax > 0.2 else ""))
-    print(f"Figures : format '{args.formato}', layout "
-          f"{'one panel per probe' if args.paneles else 'probes on shared axes'}\n")
+    print(f"Figures : format '{args.formato}' ({fmt['ancho']:g} in, "
+          f"base font {fmt['base']:g} pt, title {fmt['titulo']:g} pt), layout "
+          f"{'one panel per probe' if args.paneles else 'probes on shared axes'}")
+    if fmt.get("escala_texto", 1.0) > 1.01:
+        efectivo = fmt["ancho"] * fmt["escala_texto"] ** 0.85
+        print(f"         NOTE: the larger font makes the figures ~{efectivo:.1f} in "
+              f"wide instead of {fmt['ancho']:g} in. Placed in a "
+              f"{fmt['ancho']:g} in column they scale to "
+              f"{fmt['base'] * fmt['ancho'] / efectivo:.1f} pt effective type "
+              f"(vs {config.FORMATOS_FIGURA[args.formato]['base']:g} pt at "
+              f"--tamano-letra default).")
+    print(f"Probes  : {', '.join(config.SENSORES)}\n")
 
     filas = []
     for nombre, tab in variantes:
         sufijo = "" if nombre == "global" else f"_{nombre}"
         figura_variante(tab, carpeta / f"p6_pvalues{sufijo}.png", args.alfa,
                         nombre, args.ymax, fmt)
-        sub = tab[tab["p"].notna() & (tab["Source"] != "Repetition (block)")]
+        sub = tab[tab["p"].notna() & (tab["Source"] != "Repetition (block)")
+                  & tab["Sensor"].isin(config.SENSORES)]
         for _, f in sub.iterrows():
             filas.append({"Analysis": nombre, "Sensor": f["Sensor"],
                           "Source": f["Source"], "DF": f["DF"],

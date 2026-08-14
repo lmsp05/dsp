@@ -246,17 +246,40 @@ def escribir_tabla(df, ruta: Path, decimales: int = 4):
 # FIGURE FORMAT (publication sizing)
 # ============================================================
 
-def aplicar_formato(nombre: str) -> dict:
+def aplicar_formato(nombre: str, base: float | None = None,
+                    titulo: float | None = None) -> dict:
     """
     Apply one of `config.FORMATOS_FIGURA` to matplotlib and return its settings.
 
     Type is sized for the FINAL printed width, so the figure is placed at 100 %
     with no scaling. Shrinking a wide figure into a narrow column is exactly
     what makes the labels unreadable.
+
+    `base` overrides the base font size and `titulo` the title size, both in
+    points at final size. Everything else follows `base`: tick labels, legend,
+    bar annotations, line widths and marker sizes, so raising it does not leave
+    the rest of the figure behind. The figure also grows TALLER (see
+    `tam_figura`), because at a fixed column width the extra type needs extra
+    vertical room for rotated tick labels.
     """
     import matplotlib
 
-    f = config.FORMATOS_FIGURA[nombre]
+    f = dict(config.FORMATOS_FIGURA[nombre])
+    f["escala_texto"] = 1.0
+
+    if base:
+        f["escala_texto"] = base / f["base"]
+        f["base"] = base
+        f["ejes"] = base
+        f["ticks"] = base * 0.86
+        f["leyenda"] = base * 0.92
+        f["anotacion"] = base * 0.78
+        # Strokes grow more slowly than type: matching them 1:1 would make the
+        # figure look heavy at large font sizes.
+        f["linea"] = f["linea"] * f["escala_texto"] ** 0.6
+
+    f["titulo"] = titulo if titulo else f["titulo"] * f["escala_texto"]
+
     matplotlib.rcParams.update({
         "font.size": f["base"],
         "axes.titlesize": f["titulo"],
@@ -264,7 +287,7 @@ def aplicar_formato(nombre: str) -> dict:
         "xtick.labelsize": f["ticks"],
         "ytick.labelsize": f["ticks"],
         "legend.fontsize": f["leyenda"],
-        "figure.titlesize": f["titulo"] + 1.0,
+        "figure.titlesize": f["titulo"],
         "lines.linewidth": f["linea"],
         "lines.markersize": max(2.5, f["linea"] * 2.6),
         "axes.linewidth": max(0.5, f["linea"] * 0.5),
@@ -279,6 +302,61 @@ def aplicar_formato(nombre: str) -> dict:
 def tam_figura(f: dict, relacion: float, ancho_rel: float = 1.0):
     """
     Figure size in inches: `ancho_rel` of the preset width, `relacion` = h/w.
+
+    Raising the font size GROWS THE WHOLE FIGURE rather than squeezing the plot
+    area: at a fixed width the extra type eventually leaves no room for the axes
+    and matplotlib collapses the layout. The figure then exceeds the target
+    column and has to be scaled down when placed, but because it was drawn with
+    large type it survives that scaling — which is the point.
+
+    Width grows more slowly than the type (exponent 0.85) so the net effect is
+    still a gain in relative type size, and height a little more slowly still,
+    keeping the figure from turning into a tall strip.
     """
-    ancho = f["ancho"] * ancho_rel
-    return (ancho, ancho * relacion)
+    e = f.get("escala_texto", 1.0)
+    ancho = f["ancho"] * ancho_rel * e ** 0.85
+    return (ancho, ancho * relacion * e ** 0.10)
+
+
+def seleccionar_sensores(cojinete: str) -> list[str]:
+    """
+    Probes to plot: 'todos', 'P1' (P1Y, P1X) or 'P2' (P2Y, P2X).
+
+    The scripts assign the result to `config.SENSORES`, which every figure and
+    table reads, so the selection propagates without threading it through
+    every call.
+    """
+    if cojinete == "todos":
+        return list(config.SENSORES)
+    return [s for s in config.SENSORES if s.startswith(cojinete)]
+
+
+def envolver_titulo(texto: str, f: dict, ancho_rel: float = 1.0) -> str:
+    """
+    Wrap a title to the figure width.
+
+    Without this a long one-line title forces `bbox_inches="tight"` to widen the
+    canvas past the target column, which silently defeats the whole point of
+    fixing the width. Each existing line break is honoured and re-wrapped.
+    """
+    import textwrap
+
+    # ~0.5 * font size is a good average glyph advance for this font.
+    n = max(20, int(f["ancho"] * ancho_rel * 72.0 / (f["titulo"] * 0.5)))
+    return "\n".join(textwrap.fill(linea, n) for linea in texto.split("\n"))
+
+
+def columnas_leyenda(etiquetas, f: dict, ancho_rel: float = 1.0) -> int:
+    """
+    How many legend columns fit across the figure without widening it.
+
+    Same reasoning as `envolver_titulo`: a single row of long labels is what
+    stretches the canvas.
+    """
+    if not etiquetas:
+        return 1
+    mas_larga = max(len(str(e)) for e in etiquetas)
+    ancho_pt = f["ancho"] * ancho_rel * 72.0
+    # label text + marker + padding, in points
+    por_entrada = mas_larga * f["leyenda"] * 0.55 + f["leyenda"] * 3.2
+    return max(1, min(len(etiquetas), int(ancho_pt // max(por_entrada, 1.0))))
