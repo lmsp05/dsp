@@ -93,13 +93,47 @@ python "%A%\p5_anova_split_plot.py" --salida "%R%" --formato double --paneles-po
 python "%A%\p6_graficar_pvalores.py" --salida "%R%" --formato double --paneles-por-sensor --ymax 0.1
 ```
 
-The interaction figures (`p5_interactions`, `p5_viscosity_by_speed_band`,
-`p5_viscosity_by_unbalance`) **always** use one panel per probe, whatever the
-switch says: the probes differ by roughly a factor of six in micrometres, so
-overlaying them on one axis would flatten the smaller one against the axis.
+The curve figures (`p5_viscosity_effect`, `p5_interaction_speed`,
+`p5_interaction_unbalance`, `p5_viscosity_by_*`) **always** use one panel per
+probe, whatever the switch says: the probes differ by roughly a factor of six in
+micrometres, so overlaying them on one axis would flatten the smaller one
+against the axis. Their panels sit side by side with the title on top.
 
 Colour encoding of the probes: bearing 1 in blues, bearing 2 in warm tones; the
 Y direction dark and the X direction light.
+
+### Type size, probe selection and shared scales
+
+| Flag | Effect |
+|---|---|
+| `--tamano-letra 14` | base font size in points **at final size** |
+| `--tamano-titulo 17` | title size, set **independently** of the base size |
+| `--cojinete P1` | plot only bearing 1 (`P1Y`, `P1X`); `P2` or `todos` likewise |
+| `--eje-y-comun` | every panel of a figure gets the **same Y limits** |
+
+`--tamano-letra` is not just `font.size`: tick labels, legend, bar annotations,
+line widths and marker sizes all follow it, the figure grows so the panels keep
+usable room, the title wraps to the real width, the legend picks the number of
+columns that fits, and **the number of Y axis divisions is reduced** — a large
+font on a fixed axis height would otherwise crowd the tick labels. Set the two
+sizes separately when a big title would eat the plot area:
+
+```bat
+python "%A%\p5_anova_split_plot.py" --salida "%R%" --formato double ^
+    --cojinete P1 --tamano-letra 14 --tamano-titulo 17 --eje-y-comun
+python "%A%\p6_graficar_pvalores.py" --salida "%R%" --formato double ^
+    --cojinete P1 --tamano-letra 14 --tamano-titulo 17 --ymax 0.1
+```
+
+`--eje-y-comun` is a genuine trade-off, which is why it is a switch and not a
+default: shared limits make the probes comparable by bar or curve height, while
+independent limits let each panel use its full height and show its own shape.
+
+The **bar** figures (`p5_contribution`, `p5_naive_vs_correct`, `p6_pvalues*`)
+put every probe's bars **side by side in one panel**, in the aspect ratio of a
+figure that spans the **full page width with no column division**, and the bar
+groups are spaced so consecutive categories keep clear white space between them.
+Use `--paneles-por-sensor` if you would rather have one panel per probe.
 
 ---
 
@@ -353,8 +387,9 @@ pooled residual was contaminated with the variance of the upper strata.
 ### Analysis by unbalance level
 
 With `--grupos-desbalanceo` the analysis is repeated **for each unbalance level
-separately**, suffixed `_U1/_U2/_U3`, plus the comparison figure
-`p5_viscosity_by_unbalance.png`.
+separately**, suffixed `_U1/_U2/_U3`, plus the comparison figures
+`p5_viscosity_by_unbalance_means.png` and
+`p5_viscosity_by_unbalance_evidence.png`.
 
 There is a change of model worth understanding: fixing the unbalance **removes
 that factor from the model** and with it its error stratum. The design stops
@@ -396,11 +431,18 @@ In `<salida>/p5_statistics`:
 | `variance_components.csv` | variance attributable to each stratum |
 | `p5_contribution.png` | variability decomposition, with real significance marks |
 | `p5_naive_vs_correct.png` | real evidence versus inflated evidence, effect by effect |
-| `p5_viscosity_effect.png` | mean per oil with a 95 % CI based on Error(a) |
-| `p5_interactions.png` | viscosity × speed and viscosity × unbalance |
+| `p5_viscosity_effect.png` | mean per oil with a 95 % CI based on Error(a), one panel per probe |
+| `p5_interaction_speed.png` | viscosity × speed, one panel per probe |
+| `p5_interaction_unbalance.png` | viscosity × unbalance, one panel per probe |
 | `p5_variance_strata.png` | where the experimental variability comes from |
-| `p5_viscosity_by_speed_band.png` | (--grupos-velocidad) the effect band by band |
-| `p5_viscosity_by_unbalance.png` | (--grupos-desbalanceo) the effect level by level |
+| `p5_viscosity_by_speed_band_means.png` | (--grupos-velocidad) mean per oil, band by band |
+| `p5_viscosity_by_speed_band_evidence.png` | (--grupos-velocidad) evidence of the effect, band by band |
+| `p5_viscosity_by_unbalance_means.png` | (--grupos-desbalanceo) mean per oil, level by level |
+| `p5_viscosity_by_unbalance_evidence.png` | (--grupos-desbalanceo) evidence of the effect, level by level |
+
+The magnitude and the evidence are **separate figures** rather than two rows of
+one figure: they carry different units (micrometres against -log10(p)), so a
+reader had to switch scales between rows to follow a single figure.
 
 By default the **compensated** data are analysed
 (`p3_phasors_compensated.txt`); `--entrada` can point at `p1_phasors.txt` to

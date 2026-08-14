@@ -9,6 +9,7 @@ Useful arguments:
     --tamano-letra 14         base font size in points (steps 5-6)
     --tamano-titulo 18        title font size, set independently (steps 5-6)
     --cojinete P1             plot only bearing 1 (P1Y, P1X) in steps 5-6
+    --eje-y-comun             same Y limits on every panel of a figure (5-6)
     --modo-runout global      slow-roll vector grouping (step 3)
     --desenvolver             continuous phase in the phasor figures (steps 2, 4)
     --grupos-velocidad        also run the ANOVA per speed band (step 5)
@@ -63,6 +64,8 @@ def main() -> int:
                    help="Title font size for the steps 5 and 6 figures")
     p.add_argument("--cojinete", default="todos", choices=["todos", "P1", "P2"],
                    help="Probes plotted in steps 5 and 6")
+    p.add_argument("--eje-y-comun", dest="eje_y", action="store_true",
+                   help="All panels of a figure share the same Y limits (5-6)")
     p.add_argument("--desde", type=int, default=1, choices=[1, 2, 3, 4, 5, 6])
     args = p.parse_args()
 
@@ -71,6 +74,8 @@ def main() -> int:
     fig = ["--formato", args.formato, "--cojinete", args.cojinete]
     if args.paneles:
         fig.append("--paneles-por-sensor")
+    if args.eje_y:
+        fig.append("--eje-y-comun")
     if args.tam_letra:
         fig += ["--tamano-letra", str(args.tam_letra)]
     if args.tam_titulo:

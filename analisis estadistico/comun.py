@@ -299,7 +299,33 @@ def aplicar_formato(nombre: str, base: float | None = None,
     return f
 
 
-def tam_figura(f: dict, relacion: float, ancho_rel: float = 1.0):
+def ancho_efectivo(f: dict, ancho_rel: float = 1.0) -> float:
+    """
+    Real width of the figure in inches, after the font-size scaling.
+
+    Everything that has to fit across the figure — the title wrap, the number of
+    legend columns — must be measured against THIS and not against the preset
+    width, or a figure drawn at 10 in keeps wrapping as if it were 7 in.
+    """
+    return f["ancho"] * ancho_rel * f.get("escala_texto", 1.0) ** 0.85
+
+
+def alto_leyenda(etiquetas, f: dict, ancho_rel: float = 1.0) -> float:
+    """
+    Vertical space, in inches, that a legend placed BELOW the figure will take.
+
+    A legend outside the axes is not free: constrained_layout reserves room for
+    it by shrinking the panels. Long labels in a narrow figure fall back to one
+    entry per row, and several rows can swallow the whole plot area, so the
+    figure has to be made taller by exactly this much.
+    """
+    if not etiquetas:
+        return 0.0
+    filas = int(np.ceil(len(etiquetas) / columnas_leyenda(etiquetas, f, ancho_rel)))
+    return filas * 1.45 * f["leyenda"] / 72.0
+
+
+def tam_figura(f: dict, relacion: float, ancho_rel: float = 1.0, leyenda=()):
     """
     Figure size in inches: `ancho_rel` of the preset width, `relacion` = h/w.
 
@@ -312,10 +338,25 @@ def tam_figura(f: dict, relacion: float, ancho_rel: float = 1.0):
     Width grows more slowly than the type (exponent 0.85) so the net effect is
     still a gain in relative type size, and height a little more slowly still,
     keeping the figure from turning into a tall strip.
+
+    The height is finally held above a FLOOR. A figure whose panels sit side by
+    side asks for a proportionally shorter canvas, but the title, the legend and
+    the rotated tick labels take the same vertical space no matter how many
+    columns there are. Without the floor those fixed bands eat the whole height
+    and matplotlib gives up with "constrained_layout not applied because axes
+    sizes collapsed to zero", which is what a large --tamano-letra used to
+    trigger.
     """
     e = f.get("escala_texto", 1.0)
-    ancho = f["ancho"] * ancho_rel * e ** 0.85
-    return (ancho, ancho * relacion * e ** 0.10)
+    ancho = ancho_efectivo(f, ancho_rel)
+    # `leyenda` (the list of labels of an outside legend) buys its own band, on
+    # top of whatever the panels get.
+    banda = alto_leyenda(leyenda, f, ancho_rel)
+    alto = ancho * relacion * e ** 0.10 + banda
+    # title (up to 3 lines) + rotated tick labels + legend band, in inches, plus
+    # a minimum usable plot area.
+    piso = (3 * 1.2 * f["titulo"] + 6 * f["ticks"]) / 72.0 + banda + 1.3
+    return (ancho, max(alto, piso))
 
 
 def seleccionar_sensores(cojinete: str) -> list[str]:
@@ -342,7 +383,7 @@ def envolver_titulo(texto: str, f: dict, ancho_rel: float = 1.0) -> str:
     import textwrap
 
     # ~0.5 * font size is a good average glyph advance for this font.
-    n = max(20, int(f["ancho"] * ancho_rel * 72.0 / (f["titulo"] * 0.5)))
+    n = max(20, int(ancho_efectivo(f, ancho_rel) * 72.0 / (f["titulo"] * 0.5)))
     return "\n".join(textwrap.fill(linea, n) for linea in texto.split("\n"))
 
 
@@ -356,7 +397,66 @@ def columnas_leyenda(etiquetas, f: dict, ancho_rel: float = 1.0) -> int:
     if not etiquetas:
         return 1
     mas_larga = max(len(str(e)) for e in etiquetas)
-    ancho_pt = f["ancho"] * ancho_rel * 72.0
+    ancho_pt = ancho_efectivo(f, ancho_rel) * 72.0
     # label text + marker + padding, in points
     por_entrada = mas_larga * f["leyenda"] * 0.55 + f["leyenda"] * 3.2
     return max(1, min(len(etiquetas), int(ancho_pt // max(por_entrada, 1.0))))
+
+
+# ============================================================
+# PANEL GEOMETRY
+# ============================================================
+
+# Height / width of a SINGLE-panel figure meant to span the full page width,
+# with no column division. Clearly wider than tall, so a long row of bar groups
+# spreads across the page instead of piling up on a narrow strip.
+RELACION_PAGINA = 0.42
+
+
+def ancho_grupo_barras(n: int) -> float:
+    """
+    Fraction of a category slot taken by one group of `n` bars.
+
+    Whatever is left over is white space BETWEEN groups. With few bars the group
+    is made clearly narrower: two fat bars touching the next pair read as a
+    single block of four, which is exactly the confusion to avoid when the
+    figure occupies the whole page width.
+    """
+    return {1: 0.50, 2: 0.56, 3: 0.66}.get(n, 0.78)
+
+
+def divisiones_y(ax, f: dict, base: int = 6) -> None:
+    """
+    Thin out the Y axis ticks as the font size grows.
+
+    A large font on an axis of fixed height makes the tick labels crowd and
+    eventually overlap. The fix is FEWER DIVISIONS, not smaller numbers: the
+    reader loses nothing, since the grid is a reference and not the data.
+    `base` is the number of intervals at the preset font size.
+    """
+    from matplotlib.ticker import MaxNLocator
+
+    e = f.get("escala_texto", 1.0)
+    ax.yaxis.set_major_locator(
+        MaxNLocator(nbins=max(3, int(round(base / e ** 0.8))), min_n_ticks=3))
+
+
+def igualar_ejes_y(ejes, activo: bool = True) -> None:
+    """
+    Give every panel of one figure the SAME Y limits (--eje-y-comun).
+
+    Shared limits make the panels directly comparable by bar or curve height;
+    independent limits let each panel use its full height and show its own
+    shape. Which one is right depends on whether the probes are being compared
+    with each other or read one at a time, so it is a command-line switch and
+    not a fixed choice.
+    """
+    if not activo:
+        return
+    ejes = [a for a in ejes if a is not None and a.get_visible()]
+    if len(ejes) < 2:
+        return
+    bajo = min(a.get_ylim()[0] for a in ejes)
+    alto = max(a.get_ylim()[1] for a in ejes)
+    for a in ejes:
+        a.set_ylim(bajo, alto)

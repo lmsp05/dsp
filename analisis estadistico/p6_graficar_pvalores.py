@@ -26,6 +26,16 @@ bar, so bars far below the threshold are still told apart by their label.
 bars that exceed it are clipped and flagged with an arrow.
 
 --------------------------------------------------------------------------
+LAYOUT
+--------------------------------------------------------------------------
+By default every probe's bars go SIDE BY SIDE in one panel, in the aspect ratio
+of a figure that spans the full page width with no column division, and the bar
+groups are spaced so consecutive categories do not run together.
+--paneles-por-sensor gives each probe its own panel instead, --eje-y-comun puts
+every panel on the same Y limits, and --tamano-letra also thins out the Y axis
+divisions so the tick labels never crowd at large type.
+
+--------------------------------------------------------------------------
 INPUT
 --------------------------------------------------------------------------
 Reads the `anova_split_plot*.csv` files already written by
@@ -72,13 +82,33 @@ COLOR_SIG = "#27ae60"       # significant
 COLOR_NO_SIG = "#bdc3c7"    # not significant
 COLOR_UMBRAL = "#c0392b"
 
-# Layout switch, set from the command line by --paneles-por-sensor.
-PANELES_POR_SENSOR = False
+# Layout switches, set from the command line.
+PANELES_POR_SENSOR = False      # --paneles-por-sensor
+EJE_Y_COMUN = False             # --eje-y-comun
 
 
 # ============================================================
 # HELPERS
 # ============================================================
+
+def _rejilla(fmt, relacion=0.85, leyenda=()):
+    """
+    One panel per probe, side by side while they fit the target width.
+
+    Returns (fig, axes, cols) with exactly one axes per probe; leftover cells of
+    the grid are hidden.
+    """
+    n = len(config.SENSORES)
+    filas, cols = reparto_paneles(fmt, n)
+    fig, axes = plt.subplots(filas, cols,
+                             figsize=comun.tam_figura(fmt, relacion * filas / cols,
+                                                      leyenda=leyenda),
+                             constrained_layout=True, squeeze=False)
+    ejes = list(np.array(axes).ravel())
+    for ax in ejes[n:]:
+        ax.set_visible(False)
+    return fig, ejes[:n], cols
+
 
 def fmt_p(p):
     """p value as readable text."""
@@ -91,31 +121,40 @@ def fmt_p(p):
     return f"{p:.0e}"
 
 
-def _leyenda(fig, alfa, fmt=None):
-    """
-    Shared legend, placed outside the panels: inside it would collide with the
-    bar labels, and the direction of the scale (small p = significant) is
-    exactly what must not stay ambiguous.
-    """
+def _manijas_leyenda(alfa):
+    """Legend handles, built before the figure so its height can allow for them."""
     handles = []
     if not PANELES_POR_SENSOR:
         handles += [Patch(facecolor=config.COLOR_SENSOR[s], edgecolor="black",
                           label=s) for s in config.SENSORES]
     handles += [
         Patch(facecolor="white", edgecolor="black", hatch="///",
-              label=f"NOT significant (p >= {alfa:g})"),
+              label=f"not significant (p >= {alfa:g})"),
         Patch(facecolor=COLOR_SIG, alpha=0.25, edgecolor="none",
-              label=f"SIGNIFICANT zone — the factor does influence (p < {alfa:g})"),
+              label=f"significant zone (p < {alfa:g})"),
         Line2D([0], [0], color=COLOR_UMBRAL, ls="--",
                label=f"threshold p = {alfa:g}"),
     ]
+    return handles
+
+
+def _leyenda(fig, alfa, fmt=None):
+    """
+    Shared legend, placed outside the panels: inside it would collide with the
+    bar labels, and the direction of the scale (small p = significant) is
+    exactly what must not stay ambiguous.
+    """
+    handles = _manijas_leyenda(alfa)
     etiquetas = [h.get_label() for h in handles]
-    fig.legend(handles=handles, loc="lower center",
+    # 'outside lower center' is the placement constrained_layout reserves space
+    # for; a negative bbox_to_anchor is ignored by the layout and the legend
+    # ends up printed over the rotated tick labels.
+    fig.legend(handles=handles, loc="outside lower center",
                ncol=(comun.columnas_leyenda(etiquetas, fmt) if fmt else len(handles)),
-               frameon=False, bbox_to_anchor=(0.5, -0.05))
+               frameon=False)
 
 
-def _barras(ax, categorias, valores, alfa, ymax, resaltar=None):
+def _barras(ax, categorias, valores, alfa, ymax, resaltar=None, fmt=None):
     """
     Grouped bars: one bar per probe for every category on the X axis. In
     per-panel mode `valores` holds a single sensor and the grouping collapses.
@@ -129,9 +168,9 @@ def _barras(ax, categorias, valores, alfa, ymax, resaltar=None):
     sensores = [s for s in config.SENSORES if s in valores]
     n = len(sensores)
     x = np.arange(len(categorias), dtype=float)
-    # With few probes the group is narrowed so the gap between categories grows.
-    ancho_grupo = 0.82 if n >= 4 else (0.62 if n == 2 else 0.72)
-    ancho = ancho_grupo / max(n, 1)
+    # With few probes the group is narrowed so the white space between category
+    # blocks grows: spread across a page-wide figure, the groups must not touch.
+    ancho = comun.ancho_grupo_barras(n) / max(n, 1)
 
     for k, sensor in enumerate(sensores):
         desplazamiento = (k - (n - 1) / 2) * ancho
@@ -166,11 +205,11 @@ def _barras(ax, categorias, valores, alfa, ymax, resaltar=None):
     # Banda sombreada por DEBAJO del umbral: zona en la que el factor SI influye.
     ax.axhspan(0, alfa, color=COLOR_SIG, alpha=0.10, zorder=0)
     ax.axhline(alfa, color=COLOR_UMBRAL, ls="--", lw=1.8, zorder=3)
-    ax.text(0.995, alfa + 0.012 * ymax, f"threshold p = {alfa:g}",
-            transform=ax.get_yaxis_transform(), ha="right", va="bottom",
-            color=COLOR_UMBRAL, fontweight="bold", zorder=5,
-            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.8))
+    # The threshold is named in the legend; repeating it inside the axes only
+    # collides with the right-hand bars and their rotated p labels.
     ax.grid(axis="y", ls="--", alpha=0.35)
+    if fmt is not None:
+        comun.divisiones_y(ax, fmt)
 
 
 # ============================================================
@@ -189,20 +228,23 @@ def figura_variante(tab, ruta, alfa, etiqueta, ymax, fmt):
         t = contrastables[contrastables["Sensor"] == sensor].set_index("Source")
         valores[sensor] = [float(t.loc[f, "p"]) for f in fuentes]
 
+    etiq_leyenda = [h.get_label() for h in _manijas_leyenda(alfa)]
     if PANELES_POR_SENSOR:
-        fig, axes = _rejilla(fmt, 0.85)
-        for ax, sensor in zip(axes, config.SENSORES):
+        fig, axes, cols = _rejilla(fmt, 0.85, etiq_leyenda)
+        for j, (ax, sensor) in enumerate(zip(axes, config.SENSORES)):
             _barras(ax, etiquetas, {sensor: valores[sensor]}, alfa, ymax,
-                    resaltar="Visc")
+                    resaltar="Visc", fmt=fmt)
             ax.set_title(sensor, fontweight="bold")
-            ax.set_ylabel("p value")
+            if not EJE_Y_COMUN or j % cols == 0:
+                ax.set_ylabel("p value")
     else:
-        # With a single bearing the panel is squarer, which is what makes a
-        # full-column figure readable instead of a wide thin strip.
-        rel = 0.45 if len(config.SENSORES) >= 4 else 0.62
-        fig, ax = plt.subplots(figsize=comun.tam_figura(fmt, rel),
-                               constrained_layout=True)
-        _barras(ax, etiquetas, valores, alfa, ymax, resaltar="Visc")
+        # ONE panel with every probe's bars side by side, in the aspect ratio of
+        # a figure that spans the FULL PAGE WIDTH with no column division.
+        fig, ax = plt.subplots(
+            figsize=comun.tam_figura(fmt, comun.RELACION_PAGINA,
+                                     leyenda=etiq_leyenda),
+            constrained_layout=True)
+        _barras(ax, etiquetas, valores, alfa, ymax, resaltar="Visc", fmt=fmt)
         ax.set_ylabel("p value")
 
     fig.suptitle(comun.envolver_titulo(
@@ -225,17 +267,20 @@ def figura_viscosidad(resumen, ruta, alfa, ymax, fmt):
             ps.append(float(fila["p"].iloc[0]) if len(fila) else np.nan)
         valores[sensor] = ps
 
+    etiq_leyenda = [h.get_label() for h in _manijas_leyenda(alfa)]
     if PANELES_POR_SENSOR:
-        fig, axes = _rejilla(fmt, 0.85)
-        for ax, sensor in zip(axes, config.SENSORES):
-            _barras(ax, nombres, {sensor: valores[sensor]}, alfa, ymax)
+        fig, axes, cols = _rejilla(fmt, 0.85, etiq_leyenda)
+        for j, (ax, sensor) in enumerate(zip(axes, config.SENSORES)):
+            _barras(ax, nombres, {sensor: valores[sensor]}, alfa, ymax, fmt=fmt)
             ax.set_title(sensor, fontweight="bold")
-            ax.set_ylabel("viscosity p value")
+            if not EJE_Y_COMUN or j % cols == 0:
+                ax.set_ylabel("viscosity p value")
     else:
-        rel = 0.45 if len(config.SENSORES) >= 4 else 0.62
-        fig, ax = plt.subplots(figsize=comun.tam_figura(fmt, rel),
-                               constrained_layout=True)
-        _barras(ax, nombres, valores, alfa, ymax)
+        fig, ax = plt.subplots(
+            figsize=comun.tam_figura(fmt, comun.RELACION_PAGINA,
+                                     leyenda=etiq_leyenda),
+            constrained_layout=True)
+        _barras(ax, nombres, valores, alfa, ymax, fmt=fmt)
         ax.set_ylabel("viscosity p value")
 
     n_sig = sum(1 for _, t in resumen
@@ -264,7 +309,7 @@ def _orden(nombre):
 
 
 def main() -> int:
-    global PANELES_POR_SENSOR
+    global PANELES_POR_SENSOR, EJE_Y_COMUN
     p = argparse.ArgumentParser(
         description="Step 6: p value of each factor, with a significance threshold.")
     p.add_argument("--entrada", default="",
@@ -291,9 +336,13 @@ def main() -> int:
     p.add_argument("--cojinete", default="todos", choices=["todos", "P1", "P2"],
                    help="probes to plot: both bearings (default), only P1 "
                         "(P1Y, P1X) or only P2")
+    p.add_argument("--eje-y-comun", dest="eje_y", action="store_true",
+                   help="all panels of one figure share the same Y limits "
+                        "(default: each panel uses its own scale)")
     args = p.parse_args()
 
     PANELES_POR_SENSOR = args.paneles
+    EJE_Y_COMUN = args.eje_y
     fmt = comun.aplicar_formato(args.formato, args.tam_letra, args.tam_titulo)
     config.SENSORES = comun.seleccionar_sensores(args.cojinete)
 
@@ -310,11 +359,29 @@ def main() -> int:
               f"       Run p5_anova_split_plot.py first.")
         return 1
 
-    variantes = []
+    variantes, incompletas = [], []
     for ruta in archivos:
         nombre = ruta.stem.replace("anova_split_plot", "").lstrip("_") or "global"
-        variantes.append((nombre, pd.read_csv(ruta)))
+        tab = pd.read_csv(ruta)
+        # A leftover CSV from an earlier run with a different --cojinete holds
+        # other probes than the ones being plotted now. Skipping it with a note
+        # is better than a KeyError halfway through the figures.
+        if not set(config.SENSORES) <= set(tab["Sensor"]):
+            incompletas.append((nombre, sorted(set(tab["Sensor"]))))
+            continue
+        variantes.append((nombre, tab))
     variantes.sort(key=lambda v: _orden(v[0]))
+    if incompletas:
+        print("!! Skipped, they do not hold every requested probe (likely left "
+              "over from a run with a different --cojinete; delete them or "
+              "re-run step 5):")
+        for nombre, tiene in incompletas:
+            print(f"     anova_split_plot_{nombre}.csv  has {', '.join(tiene)}")
+        print()
+    if not variantes:
+        print("ERROR: no variant holds all of "
+              f"{', '.join(config.SENSORES)}. Re-run p5_anova_split_plot.py.")
+        return 1
 
     print(f"Folder  : {carpeta}")
     print(f"Variants: {len(variantes)} ({', '.join(n for n, _ in variantes)})")
@@ -324,7 +391,8 @@ def main() -> int:
              if args.ymax > 0.2 else ""))
     print(f"Figures : format '{args.formato}' ({fmt['ancho']:g} in, "
           f"base font {fmt['base']:g} pt, title {fmt['titulo']:g} pt), layout "
-          f"{'one panel per probe' if args.paneles else 'probes on shared axes'}")
+          f"{'one panel per probe' if args.paneles else 'probes on shared axes'}"
+          f", Y axis {'shared across panels' if args.eje_y else 'per panel'}")
     if fmt.get("escala_texto", 1.0) > 1.01:
         efectivo = fmt["ancho"] * fmt["escala_texto"] ** 0.85
         print(f"         NOTE: the larger font makes the figures ~{efectivo:.1f} in "
