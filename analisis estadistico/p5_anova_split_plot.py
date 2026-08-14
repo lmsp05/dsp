@@ -114,6 +114,7 @@ GRUPOS_VELOCIDAD = {k: v["rpm"] for k, v in config.GRUPOS_VELOCIDAD.items()}
 # Layout switches, set from the command line.
 PANELES_POR_SENSOR = False      # --paneles-por-sensor
 EJE_Y_COMUN = False             # --eje-y-comun
+MODO_ERROR = "repeticiones"     # --barras-error
 
 ETIQUETAS = {
     "Repetition (block)": "Block",
@@ -459,6 +460,97 @@ def _rejilla_sensores(fmt, relacion=0.80, ancho_rel=1.0, leyenda=()):
     return fig, ejes[:n], cols
 
 
+def _CAPSIZE(fmt):
+    """Error bar cap, scaled with the line width so it stays visible at any font."""
+    return max(2.0, fmt["linea"] * 2.2)
+
+
+def _TEXTO_ERROR(n_rep):
+    """How the error bars must be described in the figure title."""
+    if MODO_ERROR == "total":
+        return "±1 SD of all the observations behind each point"
+    return f"±1 SD across the {n_rep} repetitions"
+
+
+def _dispersion(df, col, claves):
+    """
+    +-1 standard deviation for a mean plotted over `claves`.
+
+    Which standard deviation is NOT a detail, because every point on these
+    figures averages over factors that the experiment moves on purpose:
+
+      'repeticiones' (default) — the values are first averaged WITHIN each
+        repetition, and the SD is taken between those repetition means. It
+        therefore measures repeatability: how much the same nominal condition
+        moves when the rotor is re-mounted.
+
+      'total' — the SD of every observation behind the point. It also contains
+        the designed spread of the averaged factors: an unbalance level changes
+        the amplitude by roughly a factor of three, so a bar computed this way
+        is dominated by that effect and says almost nothing about experimental
+        error.
+    """
+    if MODO_ERROR == "total":
+        return df.groupby(claves)[col].std(ddof=1)
+    por_rep = df.groupby(list(claves) + ["Repetition"])[col].mean()
+    return por_rep.groupby(list(claves)).std(ddof=1)
+
+
+def _desviacion_por_viscosidad(Y):
+    """
+    SD per viscosity for the group figures, from the response tensor.
+
+    Y is (rep, visc, unb, speed) or (rep, visc, speed). In 'repeticiones' mode
+    everything below the repetition is collapsed first, leaving one value per
+    (repetition, oil), and the SD is taken across repetitions.
+    """
+    if MODO_ERROR == "total":
+        ejes = tuple(i for i in range(Y.ndim) if i != 1)
+        return Y.std(axis=ejes, ddof=1)
+    por_rep = Y.mean(axis=tuple(range(2, Y.ndim)))       # (rep, visc)
+    return por_rep.std(axis=0, ddof=1)
+
+
+def _limites_error(ax, medias, errores, margen=0.08):
+    """
+    Y limits that leave the WHOLE error bar inside the axes.
+
+    Autoscaling from the markers alone clips the caps of the outermost bars,
+    which is precisely the information the bar was added to show.
+    """
+    m = np.concatenate([np.asarray(v, float).ravel() for v in medias])
+    e = np.nan_to_num(
+        np.concatenate([np.asarray(v, float).ravel() for v in errores]))
+    finito = np.isfinite(m)
+    if not finito.any():
+        return
+    bajo, alto = float((m - e)[finito].min()), float((m + e)[finito].max())
+    pad = margen * (alto - bajo) if alto > bajo else max(abs(alto), 1.0) * margen
+    ax.set_ylim(bajo - pad, alto + pad)
+
+
+def _ticks_velocidad(ax, x, vels, fmt, ancho_panel):
+    """
+    Speed axis: a tick at EVERY speed, a label on as many as actually fit.
+
+    Thinning the speeds themselves would hide that the sweep is not uniformly
+    spaced, so the unlabelled speeds stay as MINOR ticks. The reader can count
+    the divisions between two labelled values and place the intermediate points
+    approximately, which a bare label every third speed does not allow.
+    """
+    # Horizontal room a 60 degree rotated numeric label needs, in inches.
+    por_etiqueta = fmt["ticks"] * 1.30 / 72.0
+    paso = max(1, int(np.ceil(len(vels) * por_etiqueta / max(ancho_panel, 0.1))))
+    ax.set_xticks(x[::paso])
+    ax.set_xticklabels([str(v) for v in vels[::paso]], rotation=60)
+    if paso > 1:
+        ax.set_xticks(x, minor=True)
+        ax.tick_params(axis="x", which="minor",
+                       length=max(2.0, fmt["ticks"] * 0.30))
+        ax.grid(axis="x", which="minor", ls=":", alpha=0.30)
+    return paso
+
+
 def _etiqueta_y(ax, j, cols, texto):
     """
     Y axis label: on every panel when each has its own scale, only on the first
@@ -743,18 +835,23 @@ def fig_interaccion_velocidad(df, respuestas, viscs, desbs, vels, ruta, fmt,
     etiq_leyenda = [f"ISO {v}" for v in viscs]
     fig, axes, cols = _rejilla_sensores(fmt, 0.82, leyenda=etiq_leyenda)
 
+    ancho_panel = fig.get_size_inches()[0] / cols
     for j, (ax, sensor) in enumerate(zip(axes, config.SENSORES)):
         col = respuestas[sensor]
+        medias, errores = [], []
         for v in viscs:
-            m = df[df["Viscosity"] == v].groupby("Speed")[col].mean()
-            ax.plot(x, m.reindex(vels).to_numpy(),
-                    color=comun.color_condicion(v, 3), label=f"ISO {v}")
+            sub = df[df["Viscosity"] == v]
+            m = sub.groupby("Speed")[col].mean().reindex(vels).to_numpy()
+            s = _dispersion(sub, col, ["Speed"]).reindex(vels).to_numpy()
+            ax.errorbar(x, m, yerr=s, color=comun.color_condicion(v, 3),
+                        label=f"ISO {v}", capsize=_CAPSIZE(fmt),
+                        elinewidth=fmt["linea"] * 0.7)
+            medias.append(m), errores.append(s)
         ax.set_title(sensor, fontweight="bold")
-        paso = 1 if len(vels) <= 6 else 3
-        ax.set_xticks(x[::paso])
-        ax.set_xticklabels([str(v) for v in vels[::paso]], rotation=60)
+        _ticks_velocidad(ax, x, vels, fmt, ancho_panel)
         ax.grid(alpha=0.3, ls="--")
         ax.set_xlabel("Speed [rpm]")
+        _limites_error(ax, medias, errores)
         comun.divisiones_y(ax, fmt)
         _etiqueta_y(ax, j, cols, f"mean {unidad}")
 
@@ -764,7 +861,7 @@ def fig_interaccion_velocidad(df, respuestas, viscs, desbs, vels, ruta, fmt,
     fig.suptitle(comun.envolver_titulo(
         f"Viscosity x speed interaction{extra}\n"
         f"each point averages {n_rep} repetitions x {len(desbs)} unbalance "
-        f"level(s)", fmt), fontweight="bold")
+        f"level(s); error bars {_TEXTO_ERROR(n_rep)}", fmt), fontweight="bold")
     fig.savefig(ruta, dpi=fmt["dpi"])
     plt.close(fig)
 
@@ -778,15 +875,21 @@ def fig_interaccion_desbalanceo(df, respuestas, viscs, desbs, vels, ruta, fmt,
 
     for j, (ax, sensor) in enumerate(zip(axes, config.SENSORES)):
         col = respuestas[sensor]
+        medias, errores = [], []
         for v in viscs:
-            m = df[df["Viscosity"] == v].groupby("Unbalance")[col].mean()
-            ax.plot(x, m.reindex(desbs).to_numpy(), "o-",
-                    color=comun.color_condicion(v, 3), label=f"ISO {v}")
+            sub = df[df["Viscosity"] == v]
+            m = sub.groupby("Unbalance")[col].mean().reindex(desbs).to_numpy()
+            s = _dispersion(sub, col, ["Unbalance"]).reindex(desbs).to_numpy()
+            ax.errorbar(x, m, yerr=s, fmt="o-",
+                        color=comun.color_condicion(v, 3), label=f"ISO {v}",
+                        capsize=_CAPSIZE(fmt), elinewidth=fmt["linea"] * 0.7)
+            medias.append(m), errores.append(s)
         ax.set_title(sensor, fontweight="bold")
         ax.set_xticks(x)
         ax.set_xticklabels([f"U{d}" for d in desbs])
         ax.set_xlabel("Unbalance level")
         ax.grid(alpha=0.3, ls="--")
+        _limites_error(ax, medias, errores)
         comun.divisiones_y(ax, fmt)
         _etiqueta_y(ax, j, cols, f"mean {unidad}")
 
@@ -795,13 +898,14 @@ def fig_interaccion_desbalanceo(df, respuestas, viscs, desbs, vels, ruta, fmt,
     n_rep = len(df["Repetition"].unique())
     fig.suptitle(comun.envolver_titulo(
         f"Viscosity x unbalance interaction{extra}\n"
-        f"each point averages {n_rep} repetitions x {len(vels)} speeds", fmt),
-        fontweight="bold")
+        f"each point averages {n_rep} repetitions x {len(vels)} speeds; "
+        f"error bars {_TEXTO_ERROR(n_rep)}", fmt), fontweight="bold")
     fig.savefig(ruta, dpi=fmt["dpi"])
     plt.close(fig)
 
 
-def fig_grupo_medias(resumen, viscs, ruta, fmt, unidad, que="speed band"):
+def fig_grupo_medias(resumen, viscs, ruta, fmt, unidad, que="speed band",
+                     n_rep=0):
     """
     Mean per oil across the levels of `que`, ONE PANEL PER PROBE side by side.
 
@@ -809,30 +913,38 @@ def fig_grupo_medias(resumen, viscs, ruta, fmt, unidad, que="speed band"):
     because it carries the measured magnitude, while the companion figure
     carries the evidence. Mixing units and -log10(p) in one figure forced the
     reader to switch scales between rows.
+
+    The band meanings are deliberately NOT written into the title: they are
+    declared once elsewhere in the document instead of on every figure.
     """
-    nombres = [n for n, _, _ in resumen]
+    nombres = [n for n, _, _, _ in resumen]
     x = np.arange(len(resumen), dtype=float)
     etiq_leyenda = [f"ISO {v}" for v in viscs]
     fig, axes, cols = _rejilla_sensores(fmt, 0.82, leyenda=etiq_leyenda)
 
     for j, (ax, sensor) in enumerate(zip(axes, config.SENSORES)):
+        medias, errores = [], []
         for iv, v in enumerate(viscs):
-            ax.plot(x, [m[sensor][iv] for _, m, _ in resumen], "o-",
-                    color=comun.color_condicion(v, 3), label=f"ISO {v}")
+            m = np.array([me[sensor][iv] for _, me, _, _ in resumen], float)
+            s = np.array([de[sensor][iv] for _, _, de, _ in resumen], float)
+            ax.errorbar(x, m, yerr=s, fmt="o-",
+                        color=comun.color_condicion(v, 3), label=f"ISO {v}",
+                        capsize=_CAPSIZE(fmt), elinewidth=fmt["linea"] * 0.7)
+            medias.append(m), errores.append(s)
         ax.set_title(sensor, fontweight="bold")
         ax.set_xticks(x)
         ax.set_xticklabels(nombres)
         ax.set_xlabel(que.capitalize())
         ax.grid(alpha=0.3, ls="--")
+        _limites_error(ax, medias, errores)
         comun.divisiones_y(ax, fmt)
         _etiqueta_y(ax, j, cols, f"mean {unidad}")
 
     comun.igualar_ejes_y(axes, EJE_Y_COMUN)
     _leyenda_aceites(fig, viscs, fmt)
-    sub = config.leyenda_grupos() if que == "speed band" else ""
     fig.suptitle(comun.envolver_titulo(
-        f"Mean response per oil by {que}" + (f"\n{sub}" if sub else ""), fmt),
-        fontweight="bold")
+        f"Mean response per oil by {que} — error bars {_TEXTO_ERROR(n_rep)}",
+        fmt), fontweight="bold")
     fig.savefig(ruta, dpi=fmt["dpi"])
     plt.close(fig)
 
@@ -842,13 +954,13 @@ def fig_grupo_evidencia(resumen, ruta, fmt, que="speed band"):
     Evidence of the viscosity effect across the levels of `que`, ONE PANEL PER
     PROBE side by side. Formerly the lower row of `p5_viscosity_by_*`.
     """
-    nombres = [n for n, _, _ in resumen]
+    nombres = [n for n, _, _, _ in resumen]
     x = np.arange(len(resumen), dtype=float)
     fig, axes, cols = _rejilla_sensores(fmt, 0.82,
                                         leyenda=["not significant"])
 
     for j, (ax, sensor) in enumerate(zip(axes, config.SENSORES)):
-        ps = np.array([max(float(pp[sensor]), 1e-300) for _, _, pp in resumen])
+        ps = np.array([max(float(pp[sensor]), 1e-300) for _, _, _, pp in resumen])
         ax.bar(x, -np.log10(ps), 0.58,
                color=[config.COLOR_SENSOR[sensor] if q < 0.05 else "white"
                       for q in ps],
@@ -868,13 +980,15 @@ def fig_grupo_evidencia(resumen, ruta, fmt, que="speed band"):
                   label="not significant")
     leyenda_figura(fig, [trama], fmt)
 
-    n_sig = sum(1 for _, _, pp in resumen for s in config.SENSORES if pp[s] < 0.05)
+    n_sig = sum(1 for _, _, _, pp in resumen
+                for s in config.SENSORES if pp[s] < 0.05)
     n_tot = len(resumen) * len(config.SENSORES)
-    sub = config.leyenda_grupos() if que == "speed band" else ""
+    # The band meanings are NOT spelled out here on purpose: they are declared
+    # once elsewhere in the document rather than repeated on every figure.
     fig.suptitle(comun.envolver_titulo(
         f"Evidence of the viscosity effect by {que} — significant in {n_sig} "
         f"of {n_tot} cases (probe x level); a bar above the dashed line means "
-        f"p < 0.05" + (f"\n{sub}" if sub else ""), fmt), fontweight="bold")
+        f"p < 0.05", fmt), fontweight="bold")
     fig.savefig(ruta, dpi=fmt["dpi"])
     plt.close(fig)
 
@@ -957,7 +1071,8 @@ def analizar(df, respuestas, unidad, destino: Path, fmt, sufijo: str = "",
         ph.insert(0, "Sensor", sensor)
         posthoc.append(ph)
         resultados[sensor] = {"medias": medias, "ms_e": ms_e, "gl_e": gl_e,
-                              "n": n, "tabla": tab}
+                              "n": n, "tabla": tab,
+                              "desv": _desviacion_por_viscosidad(Y)}
 
     destino.mkdir(parents=True, exist_ok=True)
     s = f"_{sufijo}" if sufijo else ""
@@ -1012,12 +1127,13 @@ def analizar(df, respuestas, unidad, destino: Path, fmt, sufijo: str = "",
         fig_estratos(comps, destino / f"p5_variance_strata{s}.png", fmt, extra)
 
     medias = {sen: resultados[sen]["medias"] for sen in config.SENSORES}
+    desvs = {sen: resultados[sen]["desv"] for sen in config.SENSORES}
     return (tablas, ingenuos, comparacion, comps,
-            pd.concat(posthoc, ignore_index=True), medias)
+            pd.concat(posthoc, ignore_index=True), medias, desvs)
 
 
 def main() -> int:
-    global PANELES_POR_SENSOR, EJE_Y_COMUN
+    global PANELES_POR_SENSOR, EJE_Y_COMUN, MODO_ERROR
     p = argparse.ArgumentParser(
         description="Step 5: split-plot ANOVA matched to the experimental design.")
     p.add_argument("--entrada", default="",
@@ -1040,6 +1156,13 @@ def main() -> int:
     p.add_argument("--cojinete", default="todos", choices=["todos", "P1", "P2"],
                    help="probes to plot: both bearings (default), only P1 "
                         "(P1Y, P1X) or only P2")
+    p.add_argument("--barras-error", dest="barras_error",
+                   default="repeticiones", choices=["repeticiones", "total"],
+                   help="what the error bars of the mean-response figures show: "
+                        "'repeticiones' (default) +-1 SD between the repetition "
+                        "means, i.e. repeatability; 'total' +-1 SD of every "
+                        "observation behind the point, which also contains the "
+                        "designed spread of the averaged factors")
     p.add_argument("--eje-y-comun", dest="eje_y", action="store_true",
                    help="all panels of one figure share the same Y limits, so "
                         "the probes are comparable by bar or curve height "
@@ -1053,6 +1176,7 @@ def main() -> int:
 
     PANELES_POR_SENSOR = args.paneles
     EJE_Y_COMUN = args.eje_y
+    MODO_ERROR = args.barras_error
     fmt = comun.aplicar_formato(args.formato, args.tam_letra, args.tam_titulo)
     # Every figure and table reads config.SENSORES, so restricting it here
     # propagates the bearing selection through the whole step.
@@ -1077,7 +1201,7 @@ def main() -> int:
 
     destino = salida / config.DIR_ESTADISTICA
     try:
-        tablas, ingenuos, comparacion, comps, posthoc, _ = analizar(
+        tablas, ingenuos, comparacion, comps, posthoc, _, _ = analizar(
             df, respuestas, unidad, destino, fmt)
     except ValueError as e:
         print(f"ERROR: {e}")
@@ -1102,7 +1226,8 @@ def main() -> int:
     print(f"         layout "
           f"{'one panel per probe' if args.paneles else 'probes on shared axes'}"
           f", Y axis {'shared across panels' if args.eje_y else 'per panel'}"
-          f", probes: {', '.join(config.SENSORES)}\n")
+          f", probes: {', '.join(config.SENSORES)}")
+    print(f"         error bars: {_TEXTO_ERROR(len(df['Repetition'].unique()))}\n")
 
     print("=" * 78)
     print(f"SPLIT-PLOT ANOVA — sensor {config.SENSORES[0]} (example)")
@@ -1149,7 +1274,7 @@ def main() -> int:
                 print(f"  {nombre}: fewer than 2 speeds available, skipped.")
                 continue
             try:
-                _, _, cmp_g, _, _, medias_g = analizar(
+                _, _, cmp_g, _, _, medias_g, desv_g = analizar(
                     sub, respuestas, unidad, destino, fmt, nombre)
             except ValueError as e:
                 print(f"  {nombre}: {e}")
@@ -1158,14 +1283,14 @@ def main() -> int:
             print(f"  {nombre} ({len(disponibles)} rpm): viscosity significant "
                   f"in {sig}/{len(config.SENSORES)} sensors  "
                   f"(min p = {cmp_g['p_correct'].min():.4g})")
-            resumen.append((nombre, medias_g,
+            resumen.append((nombre, medias_g, desv_g,
                             dict(zip(cmp_g["Sensor"], cmp_g["p_correct"]))))
 
         if len(resumen) >= 2:
             viscs = sorted(df["Viscosity"].unique())
             fig_grupo_medias(resumen, viscs,
                              destino / "p5_viscosity_by_speed_band_means.png",
-                             fmt, unidad, que="speed band")
+                             fmt, unidad, que="speed band", n_rep=r)
             fig_grupo_evidencia(
                 resumen, destino / "p5_viscosity_by_speed_band_evidence.png",
                 fmt, que="speed band")
@@ -1188,7 +1313,7 @@ def main() -> int:
             sub = df[df["Unbalance"] == d]
             nombre = f"U{int(d)}"
             try:
-                _, _, cmp_d, _, _, medias_d = analizar(
+                _, _, cmp_d, _, _, medias_d, desv_d = analizar(
                     sub, respuestas, unidad, destino, fmt, nombre)
             except ValueError as e:
                 print(f"  {nombre}: {e}")
@@ -1197,14 +1322,14 @@ def main() -> int:
             print(f"  {nombre}: viscosity significant in "
                   f"{sig}/{len(config.SENSORES)} sensors  "
                   f"(min p = {cmp_d['p_correct'].min():.4g})")
-            resumen_d.append((nombre, medias_d,
+            resumen_d.append((nombre, medias_d, desv_d,
                               dict(zip(cmp_d["Sensor"], cmp_d["p_correct"]))))
 
         if len(resumen_d) >= 2:
             viscs = sorted(df["Viscosity"].unique())
             fig_grupo_medias(resumen_d, viscs,
                              destino / "p5_viscosity_by_unbalance_means.png",
-                             fmt, unidad, que="unbalance level")
+                             fmt, unidad, que="unbalance level", n_rep=r)
             fig_grupo_evidencia(
                 resumen_d, destino / "p5_viscosity_by_unbalance_evidence.png",
                 fmt, que="unbalance level")

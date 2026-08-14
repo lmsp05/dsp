@@ -110,6 +110,7 @@ Y direction dark and the X direction light.
 | `--tamano-titulo 17` | title size, set **independently** of the base size |
 | `--cojinete P1` | plot only bearing 1 (`P1Y`, `P1X`); `P2` or `todos` likewise |
 | `--eje-y-comun` | every panel of a figure gets the **same Y limits** |
+| `--barras-error {repeticiones,total}` | what the error bars measure (step 5) |
 
 `--tamano-letra` is not just `font.size`: tick labels, legend, bar annotations,
 line widths and marker sizes all follow it, the figure grows so the panels keep
@@ -129,6 +130,36 @@ python "%A%\p6_graficar_pvalores.py" --salida "%R%" --formato double ^
 default: shared limits make the probes comparable by bar or curve height, while
 independent limits let each panel use its full height and show its own shape.
 
+### Error bars on the mean-response figures
+
+`p5_viscosity_effect` carries a 95 % confidence interval built from Error(a),
+because that is the interval the viscosity test actually uses. The other
+mean-response figures — `p5_interaction_speed`, `p5_interaction_unbalance`,
+`p5_viscosity_by_speed_band_means`, `p5_viscosity_by_unbalance_means` — carry a
+standard deviation, and **which** standard deviation is not a detail:
+
+| `--barras-error` | The bar is | It measures |
+|---|---|---|
+| `repeticiones` (default) | ±1 SD between the repetition means | repeatability: how much the same nominal condition moves when the rotor is re-mounted |
+| `total` | ±1 SD of every observation behind the point | repeatability **plus** the designed spread of the factors being averaged |
+
+Every point on these figures is an average over factors the experiment moves on
+purpose. A point on `p5_interaction_speed` averages 3 repetitions × 3 unbalance
+levels, and the unbalance changes the amplitude by roughly a factor of three, so
+a `total` bar is dominated by that designed effect: the bars come out several
+times larger, the three oils overlap completely, and none of it is experimental
+error. The default collapses everything below the repetition first, so the bar
+answers "how well does this repeat?".
+
+The axes are expanded to keep the whole bar, caps included, inside the plot
+area — autoscaling from the markers alone clips exactly the outermost bars,
+which are the ones worth seeing.
+
+Speed axes keep **one division per speed**. When the labels do not all fit at
+the chosen width and font, only some are labelled and the rest stay as minor
+ticks, so intermediate speeds can still be located by counting divisions rather
+than disappearing from the axis.
+
 The **bar** figures (`p5_contribution`, `p5_naive_vs_correct`, `p6_pvalues*`)
 put every probe's bars **side by side in one panel**, in the aspect ratio of a
 figure that spans the **full page width with no column division**, and the bar
@@ -141,7 +172,8 @@ Use `--paneles-por-sensor` if you would rather have one panel per probe.
 
 `--grupos-velocidad` repeats the whole analysis inside each band. They are named
 **G1..G4** on the axes — long names become unreadable once a figure is scaled
-into a column — and the meaning is spelled out in the figure subtitle and here:
+into a column. The figures deliberately do **not** repeat what each band means:
+declare it once in the surrounding text, from this table:
 
 | Band | Speeds [rpm] | Meaning |
 |---|---|---|

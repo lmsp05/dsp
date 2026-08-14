@@ -10,6 +10,8 @@ Useful arguments:
     --tamano-titulo 18        title font size, set independently (steps 5-6)
     --cojinete P1             plot only bearing 1 (P1Y, P1X) in steps 5-6
     --eje-y-comun             same Y limits on every panel of a figure (5-6)
+    --barras-error total      error bars over all observations instead of
+                              between repetitions (step 5)
     --modo-runout global      slow-roll vector grouping (step 3)
     --desenvolver             continuous phase in the phasor figures (steps 2, 4)
     --grupos-velocidad        also run the ANOVA per speed band (step 5)
@@ -66,6 +68,9 @@ def main() -> int:
                    help="Probes plotted in steps 5 and 6")
     p.add_argument("--eje-y-comun", dest="eje_y", action="store_true",
                    help="All panels of a figure share the same Y limits (5-6)")
+    p.add_argument("--barras-error", dest="barras_error", default="repeticiones",
+                   choices=["repeticiones", "total"],
+                   help="What the error bars of step 5 show")
     p.add_argument("--desde", type=int, default=1, choices=[1, 2, 3, 4, 5, 6])
     args = p.parse_args()
 
@@ -86,7 +91,9 @@ def main() -> int:
         (2, "p2_graficar_fasores.py", sal + desenv),
         (3, "p3_compensar_runout.py", sal + ["--modo", args.modo_runout]),
         (4, "p4_graficar_compensados.py", sal + desenv),
-        (5, "p5_anova_split_plot.py", sal + fig + ["--respuesta", args.respuesta]
+        (5, "p5_anova_split_plot.py", sal + fig
+            + ["--respuesta", args.respuesta,
+               "--barras-error", args.barras_error]
             + (["--grupos-velocidad"] if args.grupos else [])
             + (["--grupos-desbalanceo"] if args.grupos_desb else [])),
         (6, "p6_graficar_pvalores.py", sal + fig + ["--alfa", str(args.alfa)]),
