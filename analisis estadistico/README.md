@@ -460,6 +460,7 @@ In `<salida>/p5_statistics`:
 | `anova_naive.csv` | the ordinary factorial ANOVA, for comparison |
 | `viscosity_comparison.csv` | correct vs naive F and p, and the inflation factor |
 | `posthoc_viscosity.csv` | Tukey between oils using Error(a) and its 4 df |
+| `viscosity_means.csv` | every number behind `p5_viscosity_effect.png`: mean per oil, n, MS and df of Error(a), t, and the 95 % CI bounds |
 | `variance_components.csv` | variance attributable to each stratum |
 | `p5_contribution.png` | variability decomposition, with real significance marks |
 | `p5_naive_vs_correct.png` | real evidence versus inflated evidence, effect by effect |

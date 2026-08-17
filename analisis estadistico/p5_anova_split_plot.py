@@ -65,6 +65,8 @@ OUTPUTS (in <salida>/p5_statistics)
   anova_naive.csv              the ordinary factorial ANOVA, for comparison
   viscosity_comparison.csv     correct vs naive test, summarised
   posthoc_viscosity.csv        Tukey between oils using the whole-plot error
+  viscosity_means.csv          every number behind p5_viscosity_effect.png:
+                               mean per oil, n, MS/df of Error(a) and the 95 % CI
   variance_components.csv      variance attributable to each stratum
   p5_contribution.png          share of the total SS taken by each source
   p5_naive_vs_correct.png      evidence under both models
@@ -1089,6 +1091,27 @@ def analizar(df, respuestas, unidad, destino: Path, fmt, sufijo: str = "",
     _guardar(comps, f"variance_components{s}.csv")
     pd.concat(posthoc, ignore_index=True).to_csv(
         destino / f"posthoc_viscosity{s}.csv", index=False)
+
+    # Every number behind p5_viscosity_effect.png, so the figure can be quoted
+    # without recomputing it. The bar height is the plain mean over the
+    # collapsed factors; the error bar is the 95 % CI of a whole-plot mean.
+    filas_medias = []
+    for sensor in config.SENSORES:
+        rr = resultados[sensor]
+        t_c = float(stats.t.ppf(0.975, rr["gl_e"]))
+        semi = t_c * float(np.sqrt(rr["ms_e"] / rr["n"]))
+        for k, v in enumerate(viscs):
+            media = float(rr["medias"][k])
+            filas_medias.append({
+                "Sensor": sensor, "Viscosity": int(v), "Mean": media,
+                "N_observations": int(rr["n"]),
+                "MS_Error_a": float(rr["ms_e"]), "DF_Error_a": int(rr["gl_e"]),
+                "t_crit_95": t_c, "CI95_half_width": semi,
+                "CI95_low": media - semi, "CI95_high": media + semi,
+                "SD": float(rr["desv"][k]), "SD_mode": MODO_ERROR,
+            })
+    pd.DataFrame(filas_medias).to_csv(
+        destino / f"viscosity_means{s}.csv", index=False)
 
     # condensed viscosity comparison
     filas = []
