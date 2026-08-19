@@ -111,6 +111,8 @@ Y direction dark and the X direction light.
 | `--cojinete P1` | plot only bearing 1 (`P1Y`, `P1X`); `P2` or `todos` likewise |
 | `--eje-y-comun` | every panel of a figure gets the **same Y limits** |
 | `--barras-error {repeticiones,total}` | what the error bars measure (step 5) |
+| `--escala-p {log,lineal}` | how the p value is drawn in the partition figures (step 5) |
+| `--ymax-p 0.1` | zoom the linear p axis (step 5) |
 
 `--tamano-letra` is not just `font.size`: tick labels, legend, bar annotations,
 line widths and marker sizes all follow it, the figure grows so the panels keep
@@ -154,6 +156,32 @@ answers "how well does this repeat?".
 The axes are expanded to keep the whole bar, caps included, inside the plot
 area — autoscaling from the markers alone clips exactly the outermost bars,
 which are the ones worth seeing.
+
+### p axis of the partition figures
+
+`p5_viscosity_by_speed_band_evidence.png` and
+`p5_viscosity_by_unbalance_evidence.png` can draw the p value two ways, and the
+reading direction **inverts** between them:
+
+| `--escala-p` | Bar height | Reading |
+|---|---|---|
+| `log` (default) | −log10(p) | **taller** = more evidence; significant above the dashed line |
+| `lineal` | the raw probability | **shorter** = more evidence; significant inside the green band |
+
+The linear scale is the honest one — the height *is* a probability — but on a
+0…1 axis every significant bar collapses to a sliver, because significant means
+"close to zero". Use `--ymax-p 0.1` to zoom into the threshold region; bars that
+run off the top are clipped, marked with an arrow, and keep their exact value
+printed inside the panel.
+
+Both modes label every bar with its exact p, hatch the non-significant ones and
+name the reading direction in the figure title, so the inversion between the two
+scales can never be read the wrong way round. The threshold is fixed at 5 %, the
+same value the `Significant` columns of the CSV tables use.
+
+`p5_naive_vs_correct.png` keeps its symlog −log10(p) axis regardless: its whole
+point is comparing p values that span from 0.007 to below 1e-300, a range no
+linear axis can show.
 
 Speed axes keep **one division per speed**. When the labels do not all fit at
 the chosen width and font, only some are labelled and the rest stay as minor

@@ -76,6 +76,13 @@ COLOR_SENSOR = {
     "P2X": "#e69138",   # orange
 }
 
+# Significance colours, shared by steps 5 and 6 so that a p value always looks
+# the same wherever it is drawn: green marks the region where the factor DOES
+# influence the response, red marks the threshold itself.
+COLOR_SIGNIFICATIVO = "#27ae60"
+COLOR_NO_SIGNIFICATIVO = "#bdc3c7"
+COLOR_UMBRAL = "#c0392b"
+
 
 # ============================================================
 # FIGURE FORMATS  (--formato)

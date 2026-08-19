@@ -12,6 +12,9 @@ Useful arguments:
     --eje-y-comun             same Y limits on every panel of a figure (5-6)
     --barras-error total      error bars over all observations instead of
                               between repetitions (step 5)
+    --escala-p lineal         raw p value instead of -log10(p) in the
+                              partition figures (step 5)
+    --ymax-p 0.1              zoom the linear p axis (step 5)
     --modo-runout global      slow-roll vector grouping (step 3)
     --desenvolver             continuous phase in the phasor figures (steps 2, 4)
     --grupos-velocidad        also run the ANOVA per speed band (step 5)
@@ -71,6 +74,11 @@ def main() -> int:
     p.add_argument("--barras-error", dest="barras_error", default="repeticiones",
                    choices=["repeticiones", "total"],
                    help="What the error bars of step 5 show")
+    p.add_argument("--escala-p", dest="escala_p", default="log",
+                   choices=["log", "lineal"],
+                   help="p axis of the step 5 partition figures")
+    p.add_argument("--ymax-p", dest="ymax_p", type=float, default=1.0,
+                   help="Upper bound of the linear p axis (step 5)")
     p.add_argument("--desde", type=int, default=1, choices=[1, 2, 3, 4, 5, 6])
     args = p.parse_args()
 
@@ -93,7 +101,9 @@ def main() -> int:
         (4, "p4_graficar_compensados.py", sal + desenv),
         (5, "p5_anova_split_plot.py", sal + fig
             + ["--respuesta", args.respuesta,
-               "--barras-error", args.barras_error]
+               "--barras-error", args.barras_error,
+               "--escala-p", args.escala_p,
+               "--ymax-p", str(args.ymax_p)]
             + (["--grupos-velocidad"] if args.grupos else [])
             + (["--grupos-desbalanceo"] if args.grupos_desb else [])),
         (6, "p6_graficar_pvalores.py", sal + fig + ["--alfa", str(args.alfa)]),

@@ -117,6 +117,12 @@ GRUPOS_VELOCIDAD = {k: v["rpm"] for k, v in config.GRUPOS_VELOCIDAD.items()}
 PANELES_POR_SENSOR = False      # --paneles-por-sensor
 EJE_Y_COMUN = False             # --eje-y-comun
 MODO_ERROR = "repeticiones"     # --barras-error
+ESCALA_P = "log"                # --escala-p
+YMAX_P = 1.0                    # --ymax-p
+
+# Significance threshold used by the partition figures. It matches the 5 % that
+# the "Significant" columns of the CSV tables already apply.
+ALFA = 0.05
 
 ETIQUETAS = {
     "Repetition (block)": "Block",
@@ -951,46 +957,129 @@ def fig_grupo_medias(resumen, viscs, ruta, fmt, unidad, que="speed band",
     plt.close(fig)
 
 
+def _fmt_p_barra(p):
+    """Exact p value as a short bar label, keeping resolution for tiny values."""
+    if not np.isfinite(p):
+        return "—"
+    if p <= 1e-300:
+        return "<1e-300"
+    return f"{p:.3g}" if p >= 1e-3 else f"{p:.0e}"
+
+
+def _barras_evidencia_log(ax, x, ps, sensor, fmt):
+    """
+    -log10(p): the bar GROWS with the evidence.
+
+    The transform is what keeps a p of 1e-8 and a p of 0.04 on the same axis at
+    all; the price is that the height is no longer a probability, so the
+    threshold has to be read off the dashed line.
+    """
+    ax.bar(x, -np.log10(ps), 0.58,
+           color=[config.COLOR_SENSOR[sensor] if q < ALFA else "white"
+                  for q in ps],
+           edgecolor="black",
+           hatch=["" if q < ALFA else "///" for q in ps], zorder=2)
+    ax.axhline(-np.log10(ALFA), color=config.COLOR_UMBRAL, ls="--", lw=1.6,
+               zorder=3)
+    return "evidence  -log10(p)"
+
+
+def _barras_evidencia_lineal(ax, x, ps, sensor, fmt):
+    """
+    The p value itself, on an ordinary linear axis from 0 to YMAX_P.
+
+    The bar height IS the probability, so the reading is direct — but the
+    direction INVERTS with respect to -log10(p): here the SHORTER the bar, the
+    stronger the evidence. That reversal is exactly what must not stay
+    ambiguous, so the significant region is shaded green, non-significant bars
+    are hatched, and the exact p is written on every bar.
+    """
+    for i, p in enumerate(ps):
+        sig = p < ALFA
+        ax.bar(x[i], min(p, YMAX_P), 0.58,
+               color=config.COLOR_SENSOR[sensor] if sig else "white",
+               edgecolor="black", hatch=None if sig else "///", zorder=2)
+        if p > YMAX_P:
+            # The bar runs off the top of the axis. Its label has to go INSIDE
+            # the panel: printed above the axis it would climb over the panel
+            # title, which is exactly what --ymax-p makes happen.
+            ax.annotate("", (x[i], YMAX_P), xytext=(x[i], YMAX_P * 0.93),
+                        arrowprops=dict(arrowstyle="-|>", color="#555555",
+                                        lw=1.1), zorder=4)
+            ax.annotate(_fmt_p_barra(p), (x[i], YMAX_P * 0.90), ha="center",
+                        va="top", fontsize=fmt["anotacion"], rotation=90,
+                        zorder=5, color="#555555",
+                        bbox=dict(boxstyle="round,pad=0.15", fc="white",
+                                  ec="none", alpha=0.75))
+        else:
+            ax.annotate(_fmt_p_barra(p), (x[i], p),
+                        textcoords="offset points", xytext=(0, 4), ha="center",
+                        va="bottom", fontsize=fmt["anotacion"], rotation=90,
+                        zorder=4, color="black" if sig else "#777777")
+    ax.set_ylim(0, YMAX_P)
+    ax.axhspan(0, ALFA, color=config.COLOR_SIGNIFICATIVO, alpha=0.10, zorder=0)
+    ax.axhline(ALFA, color=config.COLOR_UMBRAL, ls="--", lw=1.6, zorder=3)
+    return "p value"
+
+
 def fig_grupo_evidencia(resumen, ruta, fmt, que="speed band"):
     """
     Evidence of the viscosity effect across the levels of `que`, ONE PANEL PER
     PROBE side by side. Formerly the lower row of `p5_viscosity_by_*`.
+
+    --escala-p picks how the p value is drawn: 'log' plots -log10(p) (taller =
+    more evidence) and 'lineal' plots the raw probability (shorter = more
+    evidence). See the two helpers above.
     """
     nombres = [n for n, _, _, _ in resumen]
     x = np.arange(len(resumen), dtype=float)
-    fig, axes, cols = _rejilla_sensores(fmt, 0.82,
-                                        leyenda=["not significant"])
+    lineal = ESCALA_P == "lineal"
+
+    etiq = [f"not significant (p >= {ALFA:g})"]
+    if lineal:
+        etiq += [f"significant zone (p < {ALFA:g})"]
+    etiq += [f"threshold p = {ALFA:g}"]
+    fig, axes, cols = _rejilla_sensores(fmt, 0.82, leyenda=etiq)
 
     for j, (ax, sensor) in enumerate(zip(axes, config.SENSORES)):
         ps = np.array([max(float(pp[sensor]), 1e-300) for _, _, _, pp in resumen])
-        ax.bar(x, -np.log10(ps), 0.58,
-               color=[config.COLOR_SENSOR[sensor] if q < 0.05 else "white"
-                      for q in ps],
-               edgecolor="black",
-               hatch=["" if q < 0.05 else "///" for q in ps], zorder=2)
-        ax.axhline(-np.log10(0.05), color="black", ls="--")
+        dibujar = _barras_evidencia_lineal if lineal else _barras_evidencia_log
+        titulo_y = dibujar(ax, x, ps, sensor, fmt)
         ax.set_title(sensor, fontweight="bold")
         ax.set_xticks(x)
         ax.set_xticklabels(nombres)
         ax.set_xlabel(que.capitalize())
         ax.grid(axis="y", alpha=0.3, ls="--")
         comun.divisiones_y(ax, fmt)
-        _etiqueta_y(ax, j, cols, "evidence  -log10(p)")
+        _etiqueta_y(ax, j, cols, titulo_y)
 
+    # On the linear scale every panel already spans 0..YMAX_P, so equalising is
+    # a no-op there; it only matters for -log10(p).
     comun.igualar_ejes_y(axes, EJE_Y_COMUN)
-    trama = Patch(facecolor="white", edgecolor="black", hatch="///",
-                  label="not significant")
-    leyenda_figura(fig, [trama], fmt)
+
+    handles = [Patch(facecolor="white", edgecolor="black", hatch="///",
+                     label=f"not significant (p >= {ALFA:g})")]
+    if lineal:
+        handles.append(Patch(facecolor=config.COLOR_SIGNIFICATIVO, alpha=0.25,
+                             edgecolor="none",
+                             label=f"significant zone (p < {ALFA:g})"))
+    handles.append(Line2D([0], [0], color=config.COLOR_UMBRAL, ls="--",
+                          label=f"threshold p = {ALFA:g}"))
+    leyenda_figura(fig, handles, fmt)
 
     n_sig = sum(1 for _, _, _, pp in resumen
-                for s in config.SENSORES if pp[s] < 0.05)
+                for s in config.SENSORES if pp[s] < ALFA)
     n_tot = len(resumen) * len(config.SENSORES)
     # The band meanings are NOT spelled out here on purpose: they are declared
     # once elsewhere in the document rather than repeated on every figure.
+    como = ("a bar inside the green band means p < "
+            f"{ALFA:g} — the SHORTER the bar, the stronger the evidence"
+            if lineal else
+            f"a bar above the dashed line means p < {ALFA:g} — the TALLER the "
+            f"bar, the stronger the evidence")
     fig.suptitle(comun.envolver_titulo(
         f"Evidence of the viscosity effect by {que} — significant in {n_sig} "
-        f"of {n_tot} cases (probe x level); a bar above the dashed line means "
-        f"p < 0.05", fmt), fontweight="bold")
+        f"of {n_tot} cases (probe x level); {como}", fmt), fontweight="bold")
     fig.savefig(ruta, dpi=fmt["dpi"])
     plt.close(fig)
 
@@ -1156,7 +1245,7 @@ def analizar(df, respuestas, unidad, destino: Path, fmt, sufijo: str = "",
 
 
 def main() -> int:
-    global PANELES_POR_SENSOR, EJE_Y_COMUN, MODO_ERROR
+    global PANELES_POR_SENSOR, EJE_Y_COMUN, MODO_ERROR, ESCALA_P, YMAX_P
     p = argparse.ArgumentParser(
         description="Step 5: split-plot ANOVA matched to the experimental design.")
     p.add_argument("--entrada", default="",
@@ -1186,6 +1275,18 @@ def main() -> int:
                         "means, i.e. repeatability; 'total' +-1 SD of every "
                         "observation behind the point, which also contains the "
                         "designed spread of the averaged factors")
+    p.add_argument("--escala-p", dest="escala_p", default="log",
+                   choices=["log", "lineal"],
+                   help="how the p value is drawn in the partition figures "
+                        "(p5_viscosity_by_*_evidence): 'log' (default) plots "
+                        "-log10(p), taller = more evidence; 'lineal' plots the "
+                        "raw probability on an ordinary 0..1 axis, shorter = "
+                        "more evidence")
+    p.add_argument("--ymax-p", dest="ymax_p", type=float, default=1.0,
+                   help="upper bound of the linear p axis (default 1.0, the "
+                        "full range of a probability). Use e.g. --ymax-p 0.1 "
+                        "to zoom into the threshold; only affects "
+                        "--escala-p lineal")
     p.add_argument("--eje-y-comun", dest="eje_y", action="store_true",
                    help="all panels of one figure share the same Y limits, so "
                         "the probes are comparable by bar or curve height "
@@ -1200,6 +1301,7 @@ def main() -> int:
     PANELES_POR_SENSOR = args.paneles
     EJE_Y_COMUN = args.eje_y
     MODO_ERROR = args.barras_error
+    ESCALA_P, YMAX_P = args.escala_p, args.ymax_p
     fmt = comun.aplicar_formato(args.formato, args.tam_letra, args.tam_titulo)
     # Every figure and table reads config.SENSORES, so restricting it here
     # propagates the bearing selection through the whole step.
@@ -1250,7 +1352,11 @@ def main() -> int:
           f"{'one panel per probe' if args.paneles else 'probes on shared axes'}"
           f", Y axis {'shared across panels' if args.eje_y else 'per panel'}"
           f", probes: {', '.join(config.SENSORES)}")
-    print(f"         error bars: {_TEXTO_ERROR(len(df['Repetition'].unique()))}\n")
+    print(f"         error bars: {_TEXTO_ERROR(len(df['Repetition'].unique()))}")
+    print(f"         p axis in the partition figures: "
+          + ("-log10(p), taller = more evidence" if args.escala_p == "log"
+             else f"linear p from 0 to {args.ymax_p:g}, shorter = more evidence")
+          + "\n")
 
     print("=" * 78)
     print(f"SPLIT-PLOT ANOVA — sensor {config.SENSORES[0]} (example)")

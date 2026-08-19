@@ -78,9 +78,10 @@ from p5_anova_split_plot import ETIQUETAS, reparto_paneles
 # precision y los CSV traen 0. Se escribe como "<1e-300".
 P_MINIMO = 1e-300
 
-COLOR_SIG = "#27ae60"       # significant
-COLOR_NO_SIG = "#bdc3c7"    # not significant
-COLOR_UMBRAL = "#c0392b"
+# Shared with step 5, so a p value looks the same wherever it is drawn.
+COLOR_SIG = config.COLOR_SIGNIFICATIVO
+COLOR_NO_SIG = config.COLOR_NO_SIGNIFICATIVO
+COLOR_UMBRAL = config.COLOR_UMBRAL
 
 # Layout switches, set from the command line.
 PANELES_POR_SENSOR = False      # --paneles-por-sensor
