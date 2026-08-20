@@ -490,7 +490,7 @@ In `<salida>/p5_statistics`:
 | `posthoc_viscosity.csv` | Tukey between oils using Error(a) and its 4 df |
 | `viscosity_means.csv` | every number behind `p5_viscosity_effect.png`: mean per oil, n, MS and df of Error(a), t, and the 95 % CI bounds |
 | `variance_components.csv` | variance attributable to each stratum |
-| `p5_contribution.png` | variability decomposition, with real significance marks |
+| `p5_contribution.png` | variability decomposition; `*` marks a source that is **not** significant at 5 % against its own error term (the error strata are not tested and carry no marker) |
 | `p5_naive_vs_correct.png` | real evidence versus inflated evidence, effect by effect |
 | `p5_viscosity_effect.png` | mean per oil with a 95 % CI based on Error(a), one panel per probe |
 | `p5_interaction_speed.png` | viscosity × speed, one panel per probe |
@@ -551,7 +551,8 @@ written by step 5 and picks up whichever variants exist.
 > influence the response: the p value is the probability of observing these data
 > *if the factor had no effect at all*, so a small p is strong evidence. This is
 > the opposite of the "big bar = important" intuition. It agrees with the marks
-> in `p5_contribution.png`: significant ↔ bar inside the green band.
+> in `p5_contribution.png`, where a bar carries an `*` exactly when it is **not**
+> significant — so an unmarked bar there is a bar inside the green band here.
 
 > **`--ymax` to zoom into the threshold.** Over the full 0–1 range every
 > significant bar sits on the floor: clearly below the line, but

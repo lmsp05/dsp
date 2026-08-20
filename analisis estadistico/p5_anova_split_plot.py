@@ -569,15 +569,34 @@ def _etiqueta_y(ax, j, cols, texto):
         ax.set_ylabel(texto)
 
 
-def barras_por_sensor(ax, categorias, valores, rayado=None, ancho_grupo=None):
+def marcar_asterisco(ax, xpos, altura):
+    """
+    Draw the asterisk that flags a bar, just above its top.
+
+    Sized from the current rcParams, so it follows --tamano-letra like every
+    other piece of type. `va="baseline"` keeps the glyph clear of the bar: an
+    asterisk sits high in its em box, so "bottom" would leave a visible gap.
+    """
+    ax.annotate("*", (xpos, altura), textcoords="offset points",
+                xytext=(0, 1), ha="center", va="baseline",
+                fontsize=matplotlib.rcParams["font.size"] * 1.5,
+                fontweight="bold", zorder=4)
+
+
+def barras_por_sensor(ax, categorias, valores, rayado=None, ancho_grupo=None,
+                      asterisco=None):
     """
     Grouped bars with the four probes on the SAME axes: one bar per probe for
     every category on the X axis.
 
       categorias : X axis labels
       valores    : {sensor: [value per category]}
-      rayado     : {sensor: [bool]} -> hatched bars, used to flag
-                   "not significant"
+      rayado     : {sensor: [bool]} -> hatched bars
+      asterisco  : {sensor: [bool]} -> an asterisk above the bar
+
+    Two ways of flagging the same thing. Hatching survives being photocopied but
+    fights with the fill colour; an asterisk keeps every bar its own solid
+    colour, which matters when the colour is the probe identity.
 
     With few probes the group is made narrower so the gap between categories
     grows: two fat bars touching the next pair read as one block of four.
@@ -592,10 +611,13 @@ def barras_por_sensor(ax, categorias, valores, rayado=None, ancho_grupo=None):
     for k, sensor in enumerate(sensores):
         desplazamiento = (k - (n - 1) / 2) * ancho
         tramas = (rayado or {}).get(sensor, [False] * len(categorias))
+        marcas = (asterisco or {}).get(sensor, [False] * len(categorias))
         for i, (v, t) in enumerate(zip(valores[sensor], tramas)):
             ax.bar(x[i] + desplazamiento, v, ancho * 0.92,
                    color=config.COLOR_SENSOR.get(sensor, "#888888"),
                    edgecolor="black", hatch="///" if t else None, zorder=2)
+            if marcas[i]:
+                marcar_asterisco(ax, x[i] + desplazamiento, v)
 
     ax.set_xticks(x)
     ax.set_xlim(-0.5, len(categorias) - 0.5)
@@ -650,29 +672,38 @@ def fig_contribucion(tablas, ruta, fmt, extra=""):
                if f != "Repetition (block)"]
     etiquetas = [ETIQUETAS.get(f, f) for f in fuentes]
 
-    valores, rayado = {}, {}
+    valores, marcado = {}, {}
     for sensor in config.SENSORES:
         t = tablas[sensor].set_index("Source")
         valores[sensor] = [float(t.loc[f, "Contribution_SS_%"]) for f in fuentes]
-        rayado[sensor] = [not (np.isfinite(t.loc[f, "p"]) and t.loc[f, "p"] < 0.05)
-                          for f in fuentes]
+        # Only TESTED sources can fail a test. The error strata carry p = NaN
+        # because they are the yardstick, not a hypothesis, so they get no
+        # marker at all: an asterisk on Error(a) would read as a verdict on
+        # something that was never contrasted.
+        marcado[sensor] = [bool(np.isfinite(t.loc[f, "p"])
+                                and t.loc[f, "p"] >= 0.05) for f in fuentes]
 
-    trama = Patch(facecolor="white", edgecolor="black", hatch="///",
-                  label="not significant")
+    # This figure flags non-significance with an ASTERISK rather than hatching,
+    # so every bar keeps its solid probe colour. Note the marker is on the bars
+    # that are NOT significant, which is the opposite of the usual convention -
+    # hence the explicit wording in the legend and the title.
+    marca = Line2D([0], [0], ls="none", marker="*", color="black",
+                   markersize=matplotlib.rcParams["font.size"] * 0.9,
+                   label="* = NOT significant at 5 %")
     diseno = "split-split-plot" if "Error(c)" in fuentes else "split-plot"
+    # Headroom so the asterisk on the tallest bar is not clipped by the axes.
+    ymax = max(max(v) for v in valores.values()) * 1.14
 
     if PANELES_POR_SENSOR:
-        ymax = max(max(v) for v in valores.values()) * 1.12
         fig, axes, cols = _rejilla_sensores(fmt, 0.85,
-                                            leyenda=[trama.get_label()])
+                                            leyenda=[marca.get_label()])
         for j, (ax, sensor) in enumerate(zip(axes, config.SENSORES)):
             ax.bar(range(len(fuentes)), valores[sensor],
                    color=config.COLOR_SENSOR[sensor], edgecolor="black",
-                   hatch=None, zorder=2)
-            for i, t in enumerate(rayado[sensor]):
-                if t:
-                    ax.patches[i].set_hatch("///")
-                    ax.patches[i].set_facecolor("white")
+                   zorder=2)
+            for i, m in enumerate(marcado[sensor]):
+                if m:
+                    marcar_asterisco(ax, i, valores[sensor][i])
             ax.set_title(sensor, fontweight="bold")
             ax.set_ylim(0, ymax)
             ax.set_xticks(range(len(fuentes)))
@@ -680,25 +711,33 @@ def fig_contribucion(tablas, ruta, fmt, extra=""):
             ax.grid(axis="y", ls="--", alpha=0.4)
             comun.divisiones_y(ax, fmt)
             _etiqueta_y(ax, j, cols, "Contribution to total SS (%)")
-        leyenda_figura(fig, [trama], fmt)
+        leyenda_figura(fig, [marca], fmt)
     else:
         # ONE panel, aspect ratio for a figure that spans the FULL PAGE WIDTH
         # with no column division: the bar groups then spread across the page
         # with real white space between them instead of touching.
+        # The legend goes BELOW rather than inside the axes: anchored to the
+        # top-right corner it covers the asterisk of whichever tall bar happens
+        # to sit under it, and which bar that is depends on the data.
+        etiq_ley = list(config.SENSORES) + [marca.get_label()]
         fig, ax = plt.subplots(
-            figsize=comun.tam_figura(fmt, comun.RELACION_PAGINA),
+            figsize=comun.tam_figura(fmt, comun.RELACION_PAGINA,
+                                     leyenda=etiq_ley),
             constrained_layout=True)
-        barras_por_sensor(ax, etiquetas, valores, rayado,
+        barras_por_sensor(ax, etiquetas, valores,
                           ancho_grupo=comun.ancho_grupo_barras(
-                              len(config.SENSORES)))
+                              len(config.SENSORES)),
+                          asterisco=marcado)
         ax.set_xticklabels(etiquetas, rotation=45, ha="right")
+        ax.set_ylim(0, ymax)
         ax.set_ylabel("Contribution to total SS (%)")
         comun.divisiones_y(ax, fmt)
-        leyenda_sensores(fig, [trama], ax=ax, fmt=fmt)
+        leyenda_sensores(fig, [marca], fmt=fmt)
 
     fig.suptitle(comun.envolver_titulo(
         f"Variability decomposition — {diseno}{extra}\n"
-        "hatched bar = not significant at 5 % with its own error term", fmt),
+        "* marks a source that is NOT significant at 5 % against its own error "
+        "term; the error strata themselves are not tested", fmt),
         fontweight="bold")
     fig.savefig(ruta, dpi=fmt["dpi"])
     plt.close(fig)
